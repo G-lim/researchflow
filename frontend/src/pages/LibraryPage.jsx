@@ -1,48 +1,72 @@
-// LibraryPage.jsx 展示已保存的论文列表
+// LibraryPage.jsx 资料库页面
 // 功能：
-//   - 页面加载时拉取已保存论文
-//   - 每篇论文可以删除（带确认弹窗）
-//   - 处理加载中 / 空状态 / 错误
+//   - 顶部展示集合管理（CollectionsPanel）
+//   - 筛选栏（LibraryFilters）
+//   - 已保存论文列表，支持删除
+//   - 点击标题进入详情页
 
 import { useState, useEffect } from 'react'
 import { listSavedPapers, deletePaper } from '../api/papers'
+import { listCollections } from '../api/collections'
 import LoadingSpinner from '../components/LoadingSpinner'
 import ErrorMessage from '../components/ErrorMessage'
 import CollectionsPanel from '../components/CollectionsPanel'
+import LibraryFilters, { DEFAULT_FILTERS } from '../components/LibraryFilters'
 
-// LibraryPage.jsx 组件
 function LibraryPage({ onSelectPaper }) {
   const [papers, setPapers] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
-  // 正在删除中的论文 id（用于禁用按钮、显示 Deleting...）
   const [deletingId, setDeletingId] = useState(null)
 
-  // 拉取已保存论文列表
-  const loadLibrary = async () => {
-    setLoading(true)
-    setError(null)
-    try {
-      const result = await listSavedPapers()
-      setPapers(result.papers)
-    } catch (err) {
-      const message =
-        err.response?.data?.error?.message ||
-        'Failed to load your library. Please try again.'
-      setError(message)
-    } finally {
-      setLoading(false)
-    }
-  }
+  // 筛选条件（由 LibraryFilters 控制）
+  const [filters, setFilters] = useState(DEFAULT_FILTERS)
 
-  // 首次进入页面时加载
+  // 所有集合（供筛选栏的下拉使用）
+  // 独立加载，与 CollectionsPanel 内部状态不共享，简单起见
+  const [collections, setCollections] = useState([])
+
+  // ---------- 加载集合（用于下拉选项） ----------
   useEffect(() => {
-    loadLibrary()
+    listCollections()
+      .then(setCollections)
+      .catch(() => {
+        // 静默失败：下拉列表为空也不影响论文列表
+      })
   }, [])
 
-  // 删除单篇论文
+  // ---------- 加载论文列表 ----------
+  // 依赖 filters，且带 300ms 防抖，避免输入时频繁请求
+  useEffect(() => {
+    let cancelled = false
+
+    async function load() {
+      setLoading(true)
+      setError(null)
+      try {
+        const result = await listSavedPapers(filters)
+        if (cancelled) return
+        setPapers(result.papers)
+      } catch (err) {
+        if (cancelled) return
+        setError(
+          err.response?.data?.error?.message ||
+            'Failed to load your library. Please try again.'
+        )
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    }
+
+    const timer = setTimeout(load, 300)
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+  }, [filters])
+
+  // ---------- 删除论文 ----------
   const handleDelete = async (paperId) => {
-    // 删除是不可逆操作，先弹确认框
     const confirmed = window.confirm(
       'Are you sure you want to remove this paper from your library?'
     )
@@ -53,68 +77,67 @@ function LibraryPage({ onSelectPaper }) {
 
     try {
       await deletePaper(paperId)
-      // 删除成功后从本地列表中过滤掉这条
-      setPapers((prev) => prev.filter((paper) => paper.id !== paperId))
+      setPapers((prev) => prev.filter((p) => p.id !== paperId))
     } catch (err) {
-      const message =
+      setError(
         err.response?.data?.error?.message ||
-        'Failed to delete this paper. Please try again.'
-      setError(message)
+          'Failed to delete this paper. Please try again.'
+      )
     } finally {
       setDeletingId(null)
     }
   }
 
-  // 加载中：显示 loading
-  if (loading) {
-    return (
-      <div className="library-page">
-        <h2>My Research Library</h2>
-        <LoadingSpinner />
-      </div>
-    )
-  }
-
   return (
     <div className="library-page">
       <h2>My Research Library</h2>
-  
+
       {/* 集合管理 */}
       <CollectionsPanel />
-  
-      {/* 错误提示 */}
+
+      {/* 筛选栏 */}
+      <LibraryFilters
+        filters={filters}
+        onChange={setFilters}
+        collections={collections}
+      />
+
       {error && <ErrorMessage message={error} />}
 
-      {/* 空状态 */}
-      {!error && papers.length === 0 && (
+      {loading && <LoadingSpinner />}
+
+      {!loading && !error && papers.length === 0 && (
         <div className="empty-state">
-          <p>No saved papers yet. Search and save papers to see them here.</p>
+          <p>No saved papers match your filters.</p>
         </div>
       )}
 
-      {/* 论文列表 */}
-      {!error && papers.length > 0 && (
+      {!loading && !error && papers.length > 0 && (
         <div className="library-list">
-          <p className="library-count">{papers.length} saved papers</p>
+          <p className="library-count">
+            {papers.length} paper{papers.length !== 1 ? 's' : ''}
+          </p>
 
           {papers.map((paper) => (
             <div key={paper.id} className="library-item">
               <div className="library-item-info">
-              <h3
-                className="library-item-title"
-                onClick={() => onSelectPaper(paper.id)}
-                style={{ cursor: 'pointer' }}
-              >
-                {paper.title}
-              </h3>
+                <h3
+                  className="library-item-title"
+                  onClick={() => onSelectPaper(paper.id)}
+                  style={{ cursor: 'pointer' }}
+                >
+                  {paper.title}
+                </h3>
                 <div className="library-item-meta">
                   {paper.publication_year && (
                     <span>Year: {paper.publication_year}</span>
                   )}
                   {paper.venue && <span>Venue: {paper.venue}</span>}
-                  {/* document_status 是后端返回的文档处理状态，可能为 null */}
                   {paper.document_status && (
                     <span>Document: {paper.document_status}</span>
+                  )}
+                  {paper.latest_analysis_status && (
+                    <span>Analysis: {paper.latest_analysis_status}</span>
                   )}
                 </div>
               </div>

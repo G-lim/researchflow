@@ -50,10 +50,33 @@ export async function savePaper(paper) {
  * 获取已保存论文列表
  * 对应后端接口：GET /api/papers
  *
+ * 所有筛选参数都是可选的。不传任何参数时，返回最新的全部论文。
+ *
+ * @param {object} filters
+ * @param {string} [filters.q]                 搜索标题 / 作者 / 摘要 / DOI
+ * @param {number} [filters.year_from]         起始年份
+ * @param {number} [filters.year_to]           结束年份
+ * @param {number} [filters.collection_id]     按集合筛选
+ * @param {string} [filters.document_status]   'pending' | 'processing' | 'completed' | 'failed' | 'not_started'
+ * @param {string} [filters.analysis_status]   同上，针对最新分析状态
+ * @param {string} [filters.sort_by]           'saved_at' | 'publication_year' | 'title' | 'citation_count'
+ * @param {string} [filters.sort_order]        'asc' | 'desc'
  * @returns {Promise<{papers: Array}>}
  */
-export async function listSavedPapers() {
-  const response = await client.get('/papers')
+export async function listSavedPapers(filters = {}) {
+  const params = {}
+
+  // 只传非空字段，避免后端把空字符串当有效输入
+  if (filters.q) params.q = filters.q
+  if (filters.year_from != null) params.year_from = filters.year_from
+  if (filters.year_to != null) params.year_to = filters.year_to
+  if (filters.collection_id != null) params.collection_id = filters.collection_id
+  if (filters.document_status) params.document_status = filters.document_status
+  if (filters.analysis_status) params.analysis_status = filters.analysis_status
+  if (filters.sort_by) params.sort_by = filters.sort_by
+  if (filters.sort_order) params.sort_order = filters.sort_order
+
+  const response = await client.get('/papers', { params })
   return response.data
 }
 
