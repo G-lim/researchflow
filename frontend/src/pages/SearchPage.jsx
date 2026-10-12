@@ -10,11 +10,12 @@
 //   - saveError：保存失败时的错误信息
 
 import { useState, useEffect } from 'react'
+import { searchPapers, savePaper, listSavedPapers } from '../api/papers'
 import SearchBar from '../components/SearchBar'
 import PaperList from '../components/PaperList'
 import LoadingSpinner from '../components/LoadingSpinner'
 import ErrorMessage from '../components/ErrorMessage'
-import { searchPapers, savePaper, listSavedPapers } from '../api/papers'
+import CacheNotice from '../components/CacheNotice'
 
 function SearchPage() {
   const [papers, setPapers] = useState([])
@@ -26,6 +27,9 @@ function SearchPage() {
   const [savedIds, setSavedIds] = useState(new Set())
   const [savingId, setSavingId] = useState(null)
   const [saveError, setSaveError] = useState(null)
+  // 缓存提示相关
+  const [fromCache, setFromCache] = useState(false)
+  const [cachedAt, setCachedAt] = useState(null)
 
   // 页面首次加载时，拉取已保存论文列表，建立 savedIds 集合
   // 这样如果用户搜索到已经保存过的论文，按钮会直接显示为 Saved
@@ -52,6 +56,8 @@ function SearchPage() {
     try {
       const result = await searchPapers(query, 1)
       setPapers(result.papers)
+      setFromCache(result.from_cache ?? false)
+      setCachedAt(result.cached_at ?? null)
     } catch (err) {
       const message =
         err.response?.data?.error?.message ||
@@ -101,6 +107,11 @@ function SearchPage() {
 
       {/* 保存错误 */}
       {!loading && !error && saveError && <ErrorMessage message={saveError} />}
+
+      {/* 缓存提示：显示在搜索结果上方 */}
+      {!loading && !error && (
+        <CacheNotice fromCache={fromCache} cachedAt={cachedAt} />
+      )}
 
       {/* 空结果提示 */}
       {!loading && !error && hasSearched && papers.length === 0 && (
