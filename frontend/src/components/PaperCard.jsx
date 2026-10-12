@@ -1,63 +1,78 @@
-// PaperCard.jsx 用于展示单篇论文的信息
-// 接收一个 paper 对象，字段与后端返回的 PaperSearchItem 对应
-// 保存相关的三个属性：
+// PaperCard.jsx 展示单篇论文信息，右下角有保存按钮
+// 保存相关属性：
 //   - isSaved：是否已保存（true 时按钮禁用并显示 Saved）
 //   - isSaving：是否正在保存中（true 时显示 Saving...）
-//   - onSave：点击保存按钮时的回调，会把当前 paper 对象传出去
+//   - onSave：点击保存按钮时的回调，会把 paper 对象传出去
 
 function PaperCard({ paper, isSaved, isSaving, onSave }) {
   // 根据状态决定按钮文案
   const buttonText = isSaved ? 'Saved' : isSaving ? 'Saving...' : 'Save'
 
-  return (
-    <div className="paper-card">
-      {/* 论文标题 */}
-      <h3 className="paper-card-title">{paper.title}</h3>
+  // 论文外部链接：优先用 landing_page_url，其次 doi
+  const paperLink = paper.landing_page_url || paper.doi
 
-      {/* 作者列表，用逗号连接；没有作者时显示 Unknown authors */}
-      <p className="paper-card-authors">
+  return (
+    <div className="paper-card card">
+      {/* 标题：有链接就包 a，没有就纯文本 */}
+      <h3>
+        {paperLink ? (
+          <a href={paperLink} target="_blank" rel="noopener noreferrer">
+            {paper.title}
+          </a>
+        ) : (
+          paper.title
+        )}
+      </h3>
+
+      {/* 作者列表 */}
+      <p className="authors">
         {paper.authors && paper.authors.length > 0
           ? paper.authors.join(', ')
           : 'Unknown authors'}
       </p>
 
       {/* 元信息：年份、期刊、引用次数 */}
-      <div className="paper-card-meta">
-        {paper.publication_year && <span>Year: {paper.publication_year}</span>}
-        {paper.venue && <span>Venue: {paper.venue}</span>}
+      <div className="row">
+        {paper.publication_year && (
+          <span className="tag">Year: {paper.publication_year}</span>
+        )}
+        {paper.venue && <span className="tag">Venue: {paper.venue}</span>}
         {paper.citation_count !== undefined && (
-          <span>Citations: {paper.citation_count}</span>
+          <span className="tag">Citations: {paper.citation_count}</span>
         )}
       </div>
 
-      {/* 摘要（若存在才显示） */}
-      {paper.abstract && <p className="paper-card-abstract">{paper.abstract}</p>}
+      {/* 摘要 */}
+      {paper.abstract && <p className="abstract">{paper.abstract}</p>}
 
-      {/* 外部链接：DOI 和原文链接 */}
-      <div className="paper-card-links">
+      {/* 外部链接 */}
+      <div className="row links">
         {paper.doi && (
           <a href={paper.doi} target="_blank" rel="noopener noreferrer">
             DOI
           </a>
         )}
         {paper.landing_page_url && (
-          <a href={paper.landing_page_url} target="_blank" rel="noopener noreferrer">
+          <a
+            href={paper.landing_page_url}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
             View Paper
           </a>
         )}
       </div>
 
-      {/* 操作区：保存按钮 */}
-      <div className="paper-card-actions">
+      {/* 保存按钮 */}
+      <footer>
         <button
           type="button"
-          className="paper-card-save-button"
           onClick={() => onSave(paper)}
           disabled={isSaved || isSaving}
         >
           {buttonText}
         </button>
-      </div>
+      </footer>
     </div>
   )
 }

@@ -27,13 +27,13 @@ function App() {
         <p>AI-Assisted Research Information Management System</p>
       </header>
 
-      {/* Tab 导航：在详情页时隐藏，避免用户混淆 */}
+      {/* Tab 滑块：用 id 选中，样式在 CSS 的 #app-tabs 里 */}
       {view !== 'detail' && (
-        <nav className="app-tabs">
-          <div className="app-tabs-track">
+        <nav id="app-tabs">
+          <div className="track">
             {/* 滑块：根据当前 view 平移 */}
             <span
-              className="app-tabs-indicator"
+              className="indicator"
               style={{
                 transform:
                   view === 'search' ? 'translateX(0)' : 'translateX(100%)',
@@ -41,14 +41,14 @@ function App() {
             />
             <button
               type="button"
-              className={view === 'search' ? 'app-tab active' : 'app-tab'}
+              className={view === 'search' ? 'active' : ''}
               onClick={() => setView('search')}
             >
               Search
             </button>
             <button
               type="button"
-              className={view === 'library' ? 'app-tab active' : 'app-tab'}
+              className={view === 'library' ? 'active' : ''}
               onClick={() => setView('library')}
             >
               My Library

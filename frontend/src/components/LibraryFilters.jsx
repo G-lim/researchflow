@@ -31,9 +31,7 @@ const STATUS_OPTIONS = [
 ]
 
 function LibraryFilters({ filters, onChange, collections }) {
-  // 本地维护 q 输入，避免每次按键都触发父组件重新加载
   const [localQ, setLocalQ] = useState(filters.q || '')
-  // 是否展开高级筛选
   const [expanded, setExpanded] = useState(false)
 
   // q 输入的防抖：300ms 后同步到父组件的 filters
@@ -47,12 +45,10 @@ function LibraryFilters({ filters, onChange, collections }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [localQ])
 
-  // 更新单个或多个字段
   const update = (patch) => {
     onChange({ ...filters, ...patch })
   }
 
-  // 清空所有筛选条件
   const clearAll = () => {
     setLocalQ('')
     onChange({ ...DEFAULT_FILTERS })
@@ -68,19 +64,17 @@ function LibraryFilters({ filters, onChange, collections }) {
   ].reduce((sum, n) => sum + n, 0)
 
   return (
-    <div className="library-filters">
-      {/* 主筛选行：搜索 + 排序 + 展开按钮 */}
+    <div className="library-filters card">
+      {/* 主筛选行 */}
       <div className="filter-row-main">
         <input
           type="search"
-          className="filter-search"
           placeholder="Search title, author, abstract, or DOI..."
           value={localQ}
           onChange={(e) => setLocalQ(e.target.value)}
         />
 
         <select
-          className="filter-sort-by"
           value={filters.sort_by}
           onChange={(e) => update({ sort_by: e.target.value })}
         >
@@ -91,7 +85,6 @@ function LibraryFilters({ filters, onChange, collections }) {
         </select>
 
         <select
-          className="filter-sort-order"
           value={filters.sort_order}
           onChange={(e) => update({ sort_order: e.target.value })}
         >
@@ -99,34 +92,25 @@ function LibraryFilters({ filters, onChange, collections }) {
           <option value="asc">Ascending</option>
         </select>
 
-        <button
-          type="button"
-          className="filter-expand-button"
-          onClick={() => setExpanded((prev) => !prev)}
-        >
+        <button type="button" onClick={() => setExpanded((prev) => !prev)}>
           {expanded ? 'Hide filters' : 'More filters'}
           {activeCount > 0 ? ` (${activeCount})` : ''}
         </button>
 
         {activeCount > 0 && (
-          <button
-            type="button"
-            className="filter-clear-button"
-            onClick={clearAll}
-          >
+          <button type="button" className="danger" onClick={clearAll}>
             Clear
           </button>
         )}
       </div>
 
-      {/* 高级筛选行：仅在展开时显示 */}
+      {/* 高级筛选行 */}
       {expanded && (
         <div className="filter-row-extra">
           <label className="filter-field">
-            <span className="filter-label">Year from</span>
+            <span>Year from</span>
             <input
               type="number"
-              className="filter-number"
               placeholder="e.g. 2015"
               min="1"
               max="9999"
@@ -140,10 +124,9 @@ function LibraryFilters({ filters, onChange, collections }) {
           </label>
 
           <label className="filter-field">
-            <span className="filter-label">Year to</span>
+            <span>Year to</span>
             <input
               type="number"
-              className="filter-number"
               placeholder="e.g. 2026"
               min="1"
               max="9999"
@@ -157,9 +140,8 @@ function LibraryFilters({ filters, onChange, collections }) {
           </label>
 
           <label className="filter-field">
-            <span className="filter-label">Collection</span>
+            <span>Collection</span>
             <select
-              className="filter-select"
               value={filters.collection_id ?? ''}
               onChange={(e) =>
                 update({
@@ -179,9 +161,8 @@ function LibraryFilters({ filters, onChange, collections }) {
           </label>
 
           <label className="filter-field">
-            <span className="filter-label">Document</span>
+            <span>Document</span>
             <select
-              className="filter-select"
               value={filters.document_status ?? ''}
               onChange={(e) =>
                 update({ document_status: e.target.value || null })
@@ -196,9 +177,8 @@ function LibraryFilters({ filters, onChange, collections }) {
           </label>
 
           <label className="filter-field">
-            <span className="filter-label">Analysis</span>
+            <span>Analysis</span>
             <select
-              className="filter-select"
               value={filters.analysis_status ?? ''}
               onChange={(e) =>
                 update({ analysis_status: e.target.value || null })

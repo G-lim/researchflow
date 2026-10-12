@@ -6,11 +6,7 @@
 //   3. 用户选择源 URL 或上传本地 PDF
 //   4. 轮询 document 状态，直到 completed 或 failed
 //   5. 解析完成后加载 sections，可展开查看 chunks
-//
-// 状态机：
-//   pending / processing → 轮询中
-//   completed            → 加载 sections
-//   failed               → Retry / 换源 / 手动上传
+//   6. 解析完成后可以启动 AI 分析
 
 import { useState, useEffect } from 'react'
 import { getSavedPaper } from '../api/papers'
@@ -38,7 +34,7 @@ function PaperDetailPage({ paperId, onBack }) {
   const [error, setError] = useState(null)
 
   // ---------- PDF 源查找 ----------
-  const [sources, setSources] = useState(null) // null = 还没查过
+  const [sources, setSources] = useState(null)
   const [loadingSources, setLoadingSources] = useState(false)
   const [sourceError, setSourceError] = useState(null)
   const [starting, setStarting] = useState(false)
@@ -79,8 +75,7 @@ function PaperDetailPage({ paperId, onBack }) {
     load()
   }, [paperId])
 
-  // ---------- Effect 2：论文加载后，检查是否已有 document ----------
-  // 如果已有的 document 已完成/失败，直接拉一次状态；否则开始轮询
+  // ---------- Effect 2：检查是否已有 document ----------
   useEffect(() => {
     if (!paper || !paper.documents || paper.documents.length === 0) return
     const latest = paper.documents[0]
@@ -107,7 +102,6 @@ function PaperDetailPage({ paperId, onBack }) {
   }, [paper])
 
   // ---------- Effect 3：轮询 document 状态 ----------
-  // 使用递归 setTimeout 而非 setInterval，避免请求堆积
   useEffect(() => {
     if (!activeDocumentId || !polling) return
     let cancelled = false
@@ -131,7 +125,6 @@ function PaperDetailPage({ paperId, onBack }) {
           timer = setTimeout(poll, POLL_INTERVAL_MS)
         }
       } catch (err) {
-        // 网络临时出错，等更长时间再试，不打断轮询
         if (!cancelled) {
           timer = setTimeout(poll, POLL_INTERVAL_MS * 2)
         }
@@ -146,7 +139,6 @@ function PaperDetailPage({ paperId, onBack }) {
     }
   }, [activeDocumentId, polling])
 
-  // ---------- 加载解析后的章节 ----------
   const loadParsedContent = async (documentId) => {
     try {
       const list = await getDocumentSections(documentId)
@@ -156,7 +148,7 @@ function PaperDetailPage({ paperId, onBack }) {
     }
   }
 
-  // ---------- 事件：查找 PDF 源 ----------
+  // ---------- 事件处理 ----------
   const handleFindSources = async () => {
     setLoadingSources(true)
     setSourceError(null)
@@ -173,7 +165,6 @@ function PaperDetailPage({ paperId, onBack }) {
     }
   }
 
-  // ---------- 事件：开始处理某个源 ----------
   const handleStartProcessing = async (sourceUrl) => {
     setStarting(true)
     setProcessingError(null)
@@ -182,7 +173,7 @@ function PaperDetailPage({ paperId, onBack }) {
       setActiveDocumentId(doc.id)
       setActiveDocument(doc)
       setPolling(true)
-      setSources(null) // 切换到处理视图
+      setSources(null)
     } catch (err) {
       setProcessingError(
         err.response?.data?.error?.message ||
@@ -193,7 +184,6 @@ function PaperDetailPage({ paperId, onBack }) {
     }
   }
 
-  // ---------- 事件：重试失败的 document ----------
   const handleRetry = async () => {
     if (!activeDocumentId) return
     setProcessingError(null)
@@ -209,7 +199,6 @@ function PaperDetailPage({ paperId, onBack }) {
     }
   }
 
-  // ---------- 事件：手动上传 PDF ----------
   const handleUpload = async (event) => {
     const file = event.target.files?.[0]
     if (!file) return
@@ -223,7 +212,6 @@ function PaperDetailPage({ paperId, onBack }) {
       setActiveDocumentId(doc.id)
       setActiveDocument(doc)
       setPolling(true)
-      // 清空源列表和查源错误，避免上传成功后残留 "No open-access sources" 提示
       setSources(null)
       setSourceError(null)
     } catch (err) {
@@ -233,12 +221,10 @@ function PaperDetailPage({ paperId, onBack }) {
       )
     } finally {
       setUploading(false)
-      // 清空文件输入，让用户可以再次选择同一个文件
       event.target.value = ''
     }
   }
 
-  // ---------- 事件：展开某个章节，加载其 chunks ----------
   const handleToggleSection = async (sectionId) => {
     if (expandedSectionId === sectionId) {
       setExpandedSectionId(null)
@@ -259,11 +245,11 @@ function PaperDetailPage({ paperId, onBack }) {
     }
   }
 
-  // ---------- 早期返回：加载中 / 错误 ----------
+  // ---------- 早期返回 ----------
   if (loading) {
     return (
       <div className="paper-detail-page">
-        <button type="button" className="back-button" onClick={onBack}>
+        <button type="button" onClick={onBack}>
           ← Back to Library
         </button>
         <LoadingSpinner />
@@ -273,7 +259,7 @@ function PaperDetailPage({ paperId, onBack }) {
   if (error) {
     return (
       <div className="paper-detail-page">
-        <button type="button" className="back-button" onClick={onBack}>
+        <button type="button" onClick={onBack}>
           ← Back to Library
         </button>
         <ErrorMessage message={error} />
@@ -297,15 +283,11 @@ function PaperDetailPage({ paperId, onBack }) {
 
   const isCompleted = activeDocument?.parsing_status === 'completed'
 
-  // 可复用的手动上传控件（在三处出现）
+  // 可复用的手动上传控件（出现在多个场景）
   const uploadControls = (
     <div className="upload-block">
-      <p className="upload-hint">
-        Or upload a PDF you downloaded yourself:
-      </p>
-      <label
-        className={`upload-label${uploading ? ' is-uploading' : ''}`}
-      >
+      <p>Or upload a PDF you downloaded yourself:</p>
+      <label className="upload-label">
         <input
           type="file"
           accept="application/pdf"
@@ -321,32 +303,34 @@ function PaperDetailPage({ paperId, onBack }) {
   return (
     <div className="paper-detail-page">
       {/* 返回按钮 */}
-      <button type="button" className="back-button" onClick={onBack}>
+      <button type="button" onClick={onBack}>
         ← Back to Library
       </button>
 
-      <article className="paper-detail">
+      <article className="paper-detail card">
         {/* 标题 */}
-        <h2 className="paper-detail-title">{paper.title}</h2>
+        <h2>{paper.title}</h2>
 
         {/* 作者 */}
-        <p className="paper-detail-authors">
+        <p className="authors">
           {paper.authors && paper.authors.length > 0
             ? paper.authors.join(', ')
             : 'Unknown authors'}
         </p>
 
         {/* 元信息 */}
-        <div className="paper-detail-meta">
-          {paper.publication_year && <span>Year: {paper.publication_year}</span>}
-          {paper.venue && <span>Venue: {paper.venue}</span>}
+        <div className="row">
+          {paper.publication_year && (
+            <span className="tag">Year: {paper.publication_year}</span>
+          )}
+          {paper.venue && <span className="tag">Venue: {paper.venue}</span>}
           {paper.citation_count !== undefined && (
-            <span>Citations: {paper.citation_count}</span>
+            <span className="tag">Citations: {paper.citation_count}</span>
           )}
         </div>
 
         {/* 外部链接 */}
-        <div className="paper-detail-links">
+        <div className="row links">
           {paper.doi && (
             <a href={paper.doi} target="_blank" rel="noopener noreferrer">
               DOI
@@ -365,7 +349,7 @@ function PaperDetailPage({ paperId, onBack }) {
 
         {/* 摘要 */}
         {paper.abstract && (
-          <section className="paper-detail-section">
+          <section>
             <h3>Abstract</h3>
             <p>{paper.abstract}</p>
           </section>
@@ -375,30 +359,29 @@ function PaperDetailPage({ paperId, onBack }) {
         <PaperCollections paperId={paperId} />
 
         {/* Full-Text Documents 区块 */}
-        <section className="paper-detail-section"></section>
-
-        {/* Full-Text Documents 区块 */}
-        <section className="paper-detail-section">
+        <section>
           <h3>Full-Text Documents</h3>
 
           {processingError && <ErrorMessage message={processingError} />}
 
-          {/* 情况 1：没有 document，也没查过源 */}
+          {/* 情况 1：无 document，也没查过源 */}
           {!activeDocument && !sources && (
-            <div className="document-actions">
-              <p className="empty-hint">No full-text document attached yet.</p>
-
-              <button
-                type="button"
-                className="find-sources-button"
-                onClick={handleFindSources}
-                disabled={loadingSources || uploading}
-              >
-                {loadingSources ? 'Searching...' : 'Find PDF Sources'}
-              </button>
-
+            <>
+              <p className="empty-hint">
+                No full-text document attached yet.
+              </p>
+              <div className="row">
+                <button
+                  type="button"
+                  className="primary"
+                  onClick={handleFindSources}
+                  disabled={loadingSources || uploading}
+                >
+                  {loadingSources ? 'Searching...' : 'Find PDF Sources'}
+                </button>
+              </div>
               {uploadControls}
-            </div>
+            </>
           )}
 
           {/* 情况 2：正在查源 */}
@@ -407,14 +390,14 @@ function PaperDetailPage({ paperId, onBack }) {
           {/* 情况 3：查源失败 */}
           {sourceError && <ErrorMessage message={sourceError} />}
 
-          {/* 情况 4：源列表已返回（有 activeDocument 时不再显示） */}
+          {/* 情况 4：源列表已返回 */}
           {!activeDocument && sources && (
             <div className="source-list">
               {sources.length === 0 && (
                 <>
                   <p className="empty-hint">
-                    No open-access PDF sources were found for this paper.
-                    You can upload a PDF manually instead.
+                    No open-access PDF sources were found for this paper. You
+                    can upload a PDF manually instead.
                   </p>
                   {uploadControls}
                 </>
@@ -433,14 +416,16 @@ function PaperDetailPage({ paperId, onBack }) {
                           {source.source_url}
                         </a>
                         {source.licence && (
-                          <span className="source-licence">
+                          <span className="tag plain">
                             Licence: {source.licence}
                           </span>
                         )}
                         <button
                           type="button"
-                          className="start-button"
-                          onClick={() => handleStartProcessing(source.source_url)}
+                          className="primary small"
+                          onClick={() =>
+                            handleStartProcessing(source.source_url)
+                          }
                           disabled={starting}
                         >
                           {starting ? 'Starting...' : 'Start Processing'}
@@ -454,7 +439,7 @@ function PaperDetailPage({ paperId, onBack }) {
             </div>
           )}
 
-          {/* 情况 5：有活跃 document，展示状态 */}
+          {/* 情况 5：有活跃 document */}
           {activeDocument && (
             <div className="document-status">
               <p>
@@ -472,7 +457,7 @@ function PaperDetailPage({ paperId, onBack }) {
                   </li>
                 )}
                 {activeDocument.error_message && (
-                  <li className="error-line">
+                  <li className="error">
                     Error: {activeDocument.error_code} —{' '}
                     {activeDocument.error_message}
                   </li>
@@ -481,19 +466,13 @@ function PaperDetailPage({ paperId, onBack }) {
 
               {isProcessing && <p className="processing-hint">Processing…</p>}
 
-              {/* 失败：重试 / 换源 / 手动上传 */}
               {isFailed && (
-                <div className="failed-actions">
-                  <button
-                    type="button"
-                    className="retry-button"
-                    onClick={handleRetry}
-                  >
+                <div className="row">
+                  <button type="button" onClick={handleRetry}>
                     Retry Processing
                   </button>
                   <button
                     type="button"
-                    className="reselect-button"
                     onClick={() => {
                       setActiveDocument(null)
                       setActiveDocumentId(null)
@@ -544,7 +523,7 @@ function PaperDetailPage({ paperId, onBack }) {
                     {expandedSectionId === section.id && (
                       <div className="section-chunks">
                         {loadingChunksFor === section.id && (
-                          <p className="chunk-loading">Loading excerpts…</p>
+                          <p className="empty-hint">Loading excerpts…</p>
                         )}
                         {chunksBySection[section.id]?.map((chunk) => (
                           <div key={chunk.id} className="chunk-item">
@@ -552,7 +531,7 @@ function PaperDetailPage({ paperId, onBack }) {
                               Chunk #{chunk.sequence_number} (p.
                               {chunk.start_page})
                             </div>
-                            <p className="chunk-text">{chunk.source_text}</p>
+                            <p>{chunk.source_text}</p>
                           </div>
                         ))}
                         {chunksBySection[section.id]?.length === 0 && (
@@ -567,9 +546,10 @@ function PaperDetailPage({ paperId, onBack }) {
               </ul>
             </div>
           )}
-          {/* 情况 7：解析完成后可以启动全文分析 */}
-          {isCompleted && <AnalysisPanel documentId={activeDocumentId} />}
         </section>
+
+        {/* 情况 7：解析完成后启动全文分析 */}
+        {isCompleted && <AnalysisPanel documentId={activeDocumentId} />}
       </article>
     </div>
   )

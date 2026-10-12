@@ -1,9 +1,5 @@
 // PaperCollections.jsx 用于 PaperDetailPage
 // 展示这篇论文属于哪些集合，并允许勾选/取消勾选
-//
-// 交互：checkbox 列表
-//   - 勾选：调用 addPaperToCollection
-//   - 取消勾选：调用 removePaperFromCollection
 
 import { useState, useEffect } from 'react'
 import {
@@ -16,16 +12,12 @@ import LoadingSpinner from './LoadingSpinner'
 import ErrorMessage from './ErrorMessage'
 
 function PaperCollections({ paperId }) {
-  // 所有可用集合
   const [allCollections, setAllCollections] = useState([])
-  // 当前论文所属的集合 id Set
   const [memberIds, setMemberIds] = useState(new Set())
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
-  // 正在处理的集合 id
   const [busyId, setBusyId] = useState(null)
 
-  // ---------- 加载所有集合 + 该论文所属集合 ----------
   useEffect(() => {
     async function load() {
       setLoading(true)
@@ -49,7 +41,6 @@ function PaperCollections({ paperId }) {
     load()
   }, [paperId])
 
-  // ---------- 切换勾选状态 ----------
   const handleToggle = async (collectionId, currentlyMember) => {
     setBusyId(collectionId)
     setError(null)
@@ -77,7 +68,7 @@ function PaperCollections({ paperId }) {
 
   if (loading) {
     return (
-      <section className="paper-detail-section">
+      <section>
         <h3>Collections</h3>
         <LoadingSpinner />
       </section>
@@ -85,7 +76,7 @@ function PaperCollections({ paperId }) {
   }
 
   return (
-    <section className="paper-detail-section">
+    <section>
       <h3>Collections</h3>
 
       {error && <ErrorMessage message={error} />}
@@ -109,9 +100,7 @@ function PaperCollections({ paperId }) {
                     disabled={busyId === collection.id}
                     onChange={() => handleToggle(collection.id, isMember)}
                   />
-                  <span className="paper-collection-name">
-                    {collection.name}
-                  </span>
+                  <span>{collection.name}</span>
                 </label>
               </li>
             )
