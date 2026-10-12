@@ -303,27 +303,14 @@ function PaperDetailPage({ paperId, onBack }) {
       <p className="upload-hint">
         Or upload a PDF you downloaded yourself:
       </p>
-      {/* 用内联样式隐藏原生 input，由外层 label 承接点击 */}
       <label
-        className="upload-label"
-        style={{
-          display: 'inline-block',
-          padding: '8px 16px',
-          background: '#4a6cf7',
-          color: '#ffffff',
-          borderRadius: '6px',
-          cursor: uploading ? 'not-allowed' : 'pointer',
-          opacity: uploading ? 0.6 : 1,
-          fontSize: '14px',
-          userSelect: 'none',
-        }}
+        className={`upload-label${uploading ? ' is-uploading' : ''}`}
       >
         <input
           type="file"
           accept="application/pdf"
           onChange={handleUpload}
           disabled={uploading}
-          style={{ display: 'none' }}
         />
         {uploading ? 'Uploading...' : 'Upload PDF'}
       </label>

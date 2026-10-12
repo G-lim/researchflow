@@ -30,20 +30,30 @@ function App() {
       {/* Tab 导航：在详情页时隐藏，避免用户混淆 */}
       {view !== 'detail' && (
         <nav className="app-tabs">
-          <button
-            type="button"
-            className={view === 'search' ? 'app-tab active' : 'app-tab'}
-            onClick={() => setView('search')}
-          >
-            Search
-          </button>
-          <button
-            type="button"
-            className={view === 'library' ? 'app-tab active' : 'app-tab'}
-            onClick={() => setView('library')}
-          >
-            My Library
-          </button>
+          <div className="app-tabs-track">
+            {/* 滑块：根据当前 view 平移 */}
+            <span
+              className="app-tabs-indicator"
+              style={{
+                transform:
+                  view === 'search' ? 'translateX(0)' : 'translateX(100%)',
+              }}
+            />
+            <button
+              type="button"
+              className={view === 'search' ? 'app-tab active' : 'app-tab'}
+              onClick={() => setView('search')}
+            >
+              Search
+            </button>
+            <button
+              type="button"
+              className={view === 'library' ? 'app-tab active' : 'app-tab'}
+              onClick={() => setView('library')}
+            >
+              My Library
+            </button>
+          </div>
         </nav>
       )}
 
