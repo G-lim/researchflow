@@ -39,7 +39,7 @@ FastAPI Backend
 
 The frontend provides the user interface for paper search, the research library, paper details, processing status, structured findings, and source evidence.
 
-The first interface will focus on one paper at a time. A user must be able to select a finding and inspect its page, section, and source excerpt.
+The interface focuses on one paper at a time. Users can open a finding to inspect its page, section, and source excerpt.
 
 ### FastAPI Backend
 
@@ -117,7 +117,7 @@ Paper deletion is blocked while a related analysis is pending or processing. A c
 
 The validator accepts evidence only from chunks included in the candidate's request batch and belonging to the analysed document. For matching only, it collapses each run of Unicode whitespace to one space and ignores surrounding quotation whitespace. Every other character must remain unchanged. Each normalised source character maps back to its original character span. The match must be unique within the referenced chunk, including overlapping matches; an exact spelling does not take priority over another whitespace-equivalent occurrence. Paraphrases, punctuation changes, joined hyphenated words, and ligature substitutions are not accepted.
 
-The backend derives the page, section, and zero-based, end-exclusive chunk offsets from stored text. It saves the unchanged source substring at those offsets, not the model's whitespace-adjusted quotation. It ignores no invalid evidence: a candidate with any invalid evidence pair is rejected as a whole. It removes duplicate evidence by chunk ID and source offsets and marks the first remaining pair as primary. Rejected candidates are not stored or exposed in this version. Existing completed results are not rewritten.
+The backend derives the page, section, and zero-based, end-exclusive chunk offsets from stored text. It saves the unchanged source substring at those offsets, not the model's whitespace-adjusted quotation. A candidate with any invalid evidence pair is rejected as a whole. It removes duplicate evidence by chunk ID and source offsets and marks the first remaining pair as primary. Rejected candidates are not stored or exposed in this version. Existing completed results are not rewritten.
 
 Before committing results, the backend checks the document and chunks again. Every supported finding needs at least one valid evidence record. A changed or missing source fails the run. The system keeps the finding and evidence as separate records so users can inspect the connection.
 
@@ -139,9 +139,9 @@ The detailed entities and relationships are defined in `data-model.md`.
 
 ### Local File Cache
 
-The local cache stores retrieved PDFs and intermediate parsing results. It also reduces repeated requests to external services.
+The local file cache stores downloaded and uploaded PDFs. Extracted pages, sections, and chunks are stored in SQLite. Search responses have a separate SQLite cache for fallback when OpenAlex is unavailable.
 
-Cached papers and secret configuration files must not be committed to Git. Cache location, retention, and deletion rules must be set before implementation.
+Cached papers and secret configuration files must not be committed to Git.
 
 PDFs currently use `backend/data/pdfs/{document_id}.pdf`, with `PDF_CACHE_PATH` available as an override. They remain until the paper is deleted; downloads are also replaced on retry. Uploaded originals survive parsing retries. File cleanup is coordinated with database deletion and recovered on startup after an interruption. The default cache is ignored by Git.
 
@@ -149,8 +149,8 @@ PDFs currently use `backend/data/pdfs/{document_id}.pdf`, with `PDF_CACHE_PATH` 
 
 1. The user searches for a paper.
 2. The backend gets paper metadata and available open-access locations from OpenAlex.
-3. The user saves the paper and starts full-text processing.
-4. The retrieval service downloads the selected PDF.
+3. The user saves the paper and selects an open-access PDF source or uploads a PDF they have permission to process.
+4. The retrieval service downloads the selected PDF, or the upload endpoint stores the submitted file for parsing.
 5. The parser extracts text while keeping page information.
 6. The section detector organises the text into sections.
 7. The text splitter creates traceable chunks.
@@ -210,7 +210,7 @@ Analysis sends extracted paper text, including text from uploads, to OpenRouter 
 
 ## Analysis Acceptance Checks
 
-The backend verification covers:
+Acceptance checks must cover:
 
 - A parsed multi-page document produces findings whose evidence matches the stored text, page, section, and offsets.
 - Every input chunk appears in a request, including the last batch and unknown sections. Input limits fail before any request.
@@ -219,13 +219,13 @@ The backend verification covers:
 - Missing categories contain no invented content. Rejected candidates are hidden, and an all-rejected run fails.
 - Invalid responses, service failures, timeouts, cancellation, and restart never expose partial results. Retry clears failure state and preserves earlier completed runs.
 - Duplicate starts are blocked atomically. Active analysis blocks paper deletion; deletion after completion removes related findings and evidence.
-- The five analysis routes follow the API contract, and existing search, library, and document behaviour still works.
+- Analysis creation, history, status, retry, findings, and evidence routes follow the API contract. Existing search, library, and document behaviour still works.
 - Service keys and internal file paths do not appear in public responses or recorded settings.
 
-Use isolated databases and cached files for automated checks. Mock external service responses for repeatable failure cases. Remove only the new temporary test files and data after verification; leave existing tests unchanged. A live model check needs configured credentials and must be reported separately from mocked checks. A small manual paper sample must assess statement accuracy and missing findings before the feature is described as evaluated.
+Automated checks use isolated databases and cached files. Mocked external service responses make failure cases repeatable. Live model results must be recorded separately from mocked checks. Manual evaluation must assess statement accuracy and missing findings across a small paper sample. Historical results and their limits are recorded in `../backend/README.md`.
 
 ## Future Multi-Paper Comparison
 
 Multi-paper comparison is a later stage. It will use findings and evidence from papers that have already completed single-paper analysis.
 
-The later comparison workflow may select two to five papers, align findings by category, show agreements and differences, and link each comparison result back to the evidence from each paper. This feature must not be added until single-paper analysis is stable and evaluated.
+The later comparison workflow may select two to five papers, align findings by category, show agreements and differences, and link each comparison result back to the evidence from each paper.

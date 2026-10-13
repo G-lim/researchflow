@@ -25,19 +25,19 @@ researchflow/
 └── experiments/             Local feasibility work, ignored by Git
 ```
 
-Formal tests belong inside `backend/tests/` or the frontend test folders. They must be committed. The ignored `experiments/` folder is only for local feasibility work.
+Existing backend tests are in `backend/tests/`. Temporary verification files are not included in repository. The `experiments/` folder is for local feasibility work.
 
-## First Development Slice
+## Original Development Slice
 
-The first slice covers paper discovery and saving:
+The first slice covered paper discovery and saving:
 
 1. Search papers with `GET /api/papers/search`.
 2. Save one result with `POST /api/papers`.
 3. Show saved papers with `GET /api/papers`.
 
-This slice does not include PDF retrieval, parsing, or full-text analysis. It must work through the frontend and backend before the next slice starts.
+The application now also includes PDF retrieval and upload, parsing, analysis, evidence views, library queries, and collections. The original slice remains a useful integration check.
 
-The frontend uses `docs/mock-data/first-slice.json` until these three backend endpoints are ready. The backend responses must match the same shapes.
+The frontend calls the real backend. `docs/mock-data/first-slice.json` retains examples for these three endpoints; it does not describe the whole application.
 
 ## Contract Rules
 
@@ -48,7 +48,7 @@ The frontend uses `docs/mock-data/first-slice.json` until these three backend en
 - The frontend must handle documented empty, loading, success, and error states.
 - The backend must return documented errors and must not expose local paths or secret values.
 
-FastAPI will provide the machine-readable API schema after the backend starts. Do not maintain a second hand-written full schema because it can drift from the application.
+The running backend provides its machine-readable schema at `/openapi.json` and interactive documentation at `/docs`. The Markdown contract explains behaviour and examples; it does not replace the generated schema.
 
 ## Frontend Work
 
@@ -60,45 +60,35 @@ FastAPI will provide the machine-readable API schema after the backend starts. D
 
 ## Backend Work
 
-- Implement only the three first-slice endpoints at the start.
+- Keep changes within the agreed MVP scope.
 - Validate query parameters and request bodies.
 - Keep response field names equal to the contract.
 - Allow the local frontend origin through backend configuration.
-- Add committed endpoint tests before the first slice is merged.
+- Run existing tests and targeted checks for changed endpoints. Record results and remaining limits.
 
 ## Git Workflow
 
-The `main` branch must stay runnable. Each developer uses a short branch for one small change.
+Both developers currently work on `main`, which must stay runnable. Agree who will edit shared files before starting. Keep each commit focused on one complete change.
 
-Example branch names:
+Before pushing:
 
-```text
-backend/paper-search
-backend/save-paper
-frontend/paper-search
-frontend/saved-papers
-docs/paper-contract
-```
+1. Review the changed files and exclude credentials, cached PDFs, local databases, and temporary test files.
+2. Commit the intended work locally, or stash unfinished changes before pulling the latest `main`.
+3. Resolve conflicts and restore any stashed work without discarding local changes.
+4. Run checks for the combined code and compare API changes with the contract.
+5. Ask the other developer to review shared contract changes, then push only the intended commits.
 
-Before a merge:
+## Search and Library Integration Check
 
-1. Update the branch from `main`.
-2. Run the checks for the changed area.
-3. Check the first-slice contract if an API field changed.
-4. Ask the other developer to review shared contract changes.
-5. Merge the small change before starting a large new branch.
-
-Do not keep one long-running `backend` branch and one long-running `frontend` branch. They will drift and delay integration.
-
-## First Integration Check
-
-The first slice is ready only when:
+Check that:
 
 - The frontend can search through the real backend.
 - A user can save one search result.
 - The saved paper appears in the library response.
 - An empty search result is shown without an error.
 - An already saved paper shows the documented conflict message.
-- A failed external search shows a retryable error.
-- The same behaviour has committed backend tests.
+- A failed external search returns matching cached results with their timestamp, or a clear error when no usable cache exists.
+- Existing backend tests and targeted checks pass, with results recorded.
+
+These checks cover search and saving only. Final acceptance must also cover library filters and collections, PDF download and upload, processing failures and retries, analysis, evidence, and retrieval of saved results after a backend restart.
 

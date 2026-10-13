@@ -2,7 +2,7 @@
 
 The backend uses Python, FastAPI, and SQLite. Route and response shapes come from `../docs/api-contract.md`.
 
-The current implementation contains:
+Paper search and library routes:
 
 ```text
 GET  /api/papers/search
@@ -77,7 +77,7 @@ Deleting a paper removes its documents, stored pages, sections, chunks, analyses
 
 The database enables foreign key checks on each connection. Writes use transactions, and the unique OpenAlex ID prevents concurrent requests from saving duplicates. A database operation that remains blocked after five seconds returns `503` with `database_unavailable`. The client can retry later.
 
-Startup creates the initial table if it is missing. Future table changes need a schema migration; startup does not alter an existing table.
+Startup creates missing tables and migrates older document tables for PDF uploads. The migration preserves existing records and checks foreign keys. Back up an existing database before upgrading; other schema changes need an explicit migration.
 
 ### Library queries and collections
 
@@ -95,7 +95,7 @@ Minimal workflow, using IDs returned by the API:
 
 A paper may belong to several groups. Repeating an addition or removal is safe while both resources exist. Names ignore case and repeated whitespace when checking duplicates. Deleting a group with `DELETE /api/collections/{collection_id}` keeps its papers, PDFs and analysis results. Deleting a paper removes its memberships but keeps the groups.
 
-Startup adds the collection tables to existing databases. The frontend still needs to connect its query and group controls to these endpoints.
+Startup adds the collection tables to existing databases. The frontend library provides query and collection controls, and paper details allow users to add or remove collection memberships.
 
 ## Full-Text PDFs
 
@@ -116,7 +116,7 @@ The start endpoint returns `202` with a document ID. Poll the document endpoint 
 
 If automatic retrieval is blocked, upload a locally available PDF using multipart fields `file` and `confirmed=true`. Confirmation means the file belongs to the saved paper and the user may process it. Install the updated requirements first. Uploads are limited to 25 MiB and must start with the PDF signature. Each upload creates a new document with `source_kind=upload`, `source_url=null` and `access_type=unknown`; it does not infer a licence or overwrite an earlier document. The backend generates its storage filename and keeps only the original filename without directory components for display.
 
-An accepted upload has retrieval `completed` and parsing `pending`. The existing worker parses the saved file without making a download request. Poll the same document endpoint and use the existing analysis and evidence endpoints after parsing completes. Retrying a failed upload preserves its file and queues parsing again. If the local file is missing, upload it again as a new document. The frontend upload control is not included in this backend change.
+An accepted upload has retrieval `completed` and parsing `pending`. The existing worker parses the saved file without making a download request. Poll the same document endpoint and use the existing analysis and evidence endpoints after parsing completes. Retrying a failed upload preserves its file and queues parsing again. If the local file is missing, upload it again as a new document. The paper details page provides a file picker and asks the user to confirm the paper and permission to process it before uploading.
 
 This is a local-only upload endpoint, not a public file-hosting service. The 25 MiB file check runs after multipart parsing; public deployment would also need an incoming request limit and access controls. Uploading does not call OpenRouter. Starting a later analysis sends extracted text to the selected provider.
 
@@ -124,9 +124,9 @@ The database stores the queue. One background worker processes one document at a
 
 Downloads have a 25 MiB limit, a 45-second time budget, and at most five redirects. Each destination must resolve only to public addresses. The connection uses the checked address and verifies HTTPS certificates against the original hostname. Local addresses, credentials in URLs, and ports other than 80 or 443 are rejected. The downloaded bytes must begin with the PDF signature. Each complete job has a 90-second process limit.
 
-The parser accepts up to 300 pages and two million extracted characters. It rejects encrypted PDFs and documents with fewer than 100 alphanumeric characters. It does not perform OCR. Blank pages keep their page numbers. A mixed scanned/text document may have pages without extracted text, so inspect the source before treating the extraction as complete.
+The parser accepts up to 300 pages and two million extracted characters. It rejects encrypted PDFs and documents with fewer than 100 alphanumeric characters. It does not perform OCR; scanned pages, figures, tables, and some embedded fonts may leave gaps in the extracted text.
 
-Sections use common English headings, including numbered headings. Heading comparison normalises spacing and compatibility characters without changing source text. Short numbered titles separated from body text by blank lines can start an `unknown` section when their names are not recognised. A following blank line is optional when the two preceding accepted headings establish a consecutive top-level numbering sequence. The original heading is retained instead of assigning the text to the previous section. This fallback excludes reference sections and rejects common sentence and numeric table patterns. It can still miss unnumbered or wrapped titles, or mistake an isolated list label for a heading. Uncertain lines remain body text. Review extracted text and section labels for each evaluation paper.
+Section detection uses common English and numbered headings. Unrecognised titles may use `unknown`; unusual layouts can cause missed or incorrect headings. Check extracted text and section labels against the PDF. Detection rules are described in `../docs/architecture.md`.
 
 Text chunks contain at most 2,000 characters and never cross a page or section boundary. Their character positions are zero-based, end-exclusive offsets into the stored page text. The source text is not rewritten. No chunk overlap is added. Page numbers start at 1.
 
@@ -151,7 +151,7 @@ Set `OPENROUTER_API_KEY` and `OPENROUTER_MODEL` in the backend process environme
 
 The client uses OpenRouter's [structured output format](https://openrouter.ai/docs/guides/features/structured-outputs), requests compatible provider routing, and validates the response locally. Unsupported models fail instead of falling back to another model or unstructured text. Extracted paper text is sent to OpenRouter and the selected provider. Each run and explicit retry can incur charges.
 
-The provider-facing schema expands local references and omits the 64-bit upper bound on `chunk_id`, which some providers reject. It still requests strict JSON Schema output with required fields, closed objects, and the remaining bounds. Local Pydantic validation continues to enforce every original constraint, including the identifier range from 1 to 9,223,372,036,854,775,807. Evidence must still match a chunk in the current batch and document.
+The backend validates the structured response locally and checks each excerpt against a chunk in the current request batch and document.
 
 After a document finishes parsing, post `{"analysis_version":"full-text-v1"}` to its analysis endpoint. An empty object uses the same version. The response returns `202` and an analysis ID. Poll the status endpoint until it returns `completed` or `failed`, then fetch findings. Only one pending or processing analysis is allowed per document; a duplicate start returns `409`.
 
@@ -161,57 +161,18 @@ Page numbers start at 1 and cannot exceed 2,147,483,647. Page size defaults to 2
 
 Findings use four categories: `research_problem`, `methodology`, `key_finding`, and `limitation`. Use `?finding_type=methodology` to filter the list. A missing category contains an `unavailable` row with null content and no evidence. This means the run found no validated result, not that the paper certainly lacks that information.
 
-The prompt defines these categories as the paper's current question or objective, the methods used, reported results, and explicitly stated constraints. Future plans alone are neither a current research problem nor proof of a limitation. Each finding must name its subject and preserve its scope and conditions. If the supplied batch does not identify the subject, the model is instructed to omit the finding. These are model instructions, not a guarantee of semantic accuracy; evidence checks still verify source binding only.
+The prompt asks for the paper's current question, methods, results, and explicit limitations. Findings must name their subject and preserve the source's scope. Future work alone is not a research problem or limitation.
 
-Open a finding to inspect its source excerpts, chunk IDs, sections, PDF pages, and character offsets. Offsets are zero-based and end-exclusive within the chunk. For locating a model quotation, the backend collapses each whitespace run to one space and ignores surrounding whitespace. It requires a unique match in the referenced chunk, then saves the unchanged source substring and its original offsets. Repeated matches, paraphrases, changed punctuation, joined hyphenated words, and changed ligatures are rejected. Stored excerpts still match source text exactly; source text is never rewritten. The backend derives locations rather than trusting model-generated page numbers. `supported` confirms a source link, not that the excerpt logically proves the statement. Check the quote and surrounding text yourself.
+Open a finding to inspect its source excerpts, sections, pages, and character offsets. Evidence must match uniquely in its stored chunk, allowing whitespace differences only. `supported` confirms a source link, not that the conclusion is correct. Matching and offset rules are described in `../docs/architecture.md` and `../docs/api-contract.md`.
 
-All extracted chunks enter ordered batches of at most 12,000 characters. A run accepts at most 200,000 source characters and 100 batches. Larger inputs fail before queueing; they are not truncated. New runs use a 600-second request timeout and a 100,000-token output limit for model reasoning and final JSON. Reasoning is not disabled. The whole run has a 30-minute timeout, not 10 minutes multiplied by the batch count. Responses have an 8 MiB byte limit. Every response still allows at most 20 candidates, each with one to five exact quotes; the larger budget does not request longer findings. Context-limit errors, truncated output, invalid responses, and service failures fail the run without publishing partial results. Parsed content missing from figures, tables, or scanned pages cannot be analysed by this text-only workflow. Existing runs and retries keep their saved token and time limits; create a new run to use the updated budget.
+Analysis accepts at most 200,000 source characters in up to 100 batches of 12,000 characters. New runs allow 100,000 output tokens, including reasoning, with a 600-second request timeout and a 30-minute total timeout. Responses are limited to 8 MiB and 20 candidates per batch. Oversized inputs, invalid responses, and service failures stop the run without publishing partial results. Retries keep their original settings; create a new run to use changed limits.
 
-On 26 September 2026, the [selected Dots free endpoint](https://openrouter.ai/api/v1/models/dots-studio/dots-3-note-preview:free/endpoints) listed a 512,000-token context and a 460,800-token maximum completion, above the requested 100,000-token budget. These limits can change. Check the selected model's limits before changing models; a large context window alone does not establish its output limit. Longer allowed responses may increase latency and cost. The backend does not silently lower the budget or switch models when a provider rejects it.
+Check that the selected model supports the input and output budgets. Provider limits and availability can change; longer responses may increase latency and cost. The backend does not lower the budget or switch models automatically.
 
 The SQLite queue has one analysis worker alongside the document worker. Keep one backend process per database. Pending runs survive restart; interrupted active runs become failed. Retry reuses a failed run's ID, original model, settings, and creation time and processes all batches again. Changing models needs a new run. Completed runs are not overwritten. There are no automatic repeat service requests.
 
-The implementation was checked with isolated databases, a previous-schema upgrade, API requests, and simulated provider responses. A fresh live run completed the full-paper analysis, evidence storage, and result retrieval after application restart for one paper. Content quality issues remain, and evaluation across a small paper sample is still outstanding. The checks below distinguish successful processing and source binding from semantic accuracy.
+### Verification summary
 
-### End-to-end verification
+A live check on 26 September 2026 used *Scikit-learn: Machine Learning in Python* and `dots-studio/dots-3-note-preview:free`. Search, PDF retrieval, parsing, analysis, evidence storage, and result retrieval after restart completed. The later run saved five findings with five source excerpts; research problems and limitations remained `unavailable`.
 
-1. Start the backend with a separate `DATABASE_PATH` and `PDF_CACHE_PATH` for validation. Configure the analysis key and explicit model in that process, without putting credentials in Git.
-2. Search for a machine-readable open-access paper, save it, query its full-text sources, and create a document using one of the returned PDF URLs.
-3. Poll document status until parsing completes. Check sections and chunks against the downloaded PDF, including page numbers and character positions.
-4. Start an analysis and retrieve its history. Poll its ID until it completes or fails. If it fails, inspect the error before retrying; do not retry service requests automatically.
-5. For a completed run, inspect all four finding categories and open supported findings to check their quotes, page locations, and meaning. An exact quote alone does not prove that the conclusion is correct.
-6. Restart the backend with the same validation paths. Retrieve paper details, document history, findings, and evidence again. An interrupted processing run should be failed with `analysis_interrupted`; pending work should resume. Keep the observed results for evaluation.
-
-An initial live retrieval check used *Scikit-learn: Machine Learning in Python* (`https://openalex.org/W2101234009`) and its OpenAlex-listed PDF at `https://arxiv.org/pdf/1201.0490`. Search, saving, source lookup, download, and parsing succeeded: 6 pages, 5 sections, and 14 chunks. Every stored chunk matched its page-text offsets. The check used a separate temporary database and cache. At that point, the key and model were not configured; starting analysis correctly returned `503` with `analysis_not_configured`. This retrieval check does not establish extraction quality for other layouts or model accuracy.
-
-A subsequent live check with `dots-studio/dots-3-note-preview:free` accepted the compatible schema but exhausted the 4,096-token output budget on the first batch, including 3,762 reasoning tokens. The response ended with `finish_reason: length`. The backend rejected it as `analysis_invalid_response`, published no findings, and retained the failed run across restart. At that stage, a completed full-paper analysis and semantic quality evaluation were still outstanding.
-
-On 26 September 2026, checks with the 8,192-token budget and 180-second request timeout retained reasoning and received complete responses for both batches. In the diagnostic run, the requests took 73.55 and 70.89 seconds; both returned HTTP 200 and `finish_reason: stop`. The provider reported zero cost for these requests. These observations do not guarantee future availability, latency, or pricing.
-
-The diagnostic run returned 17 candidates with 32 excerpts. Only one excerpt matched its referenced chunk exactly, and no candidate had all its excerpts pass validation. The run therefore failed with `evidence_missing`, published no findings, and retained its failed history across restart. Eighteen excerpts matched after whitespace normalisation in a separate diagnostic comparison, but production validation had not yet changed. Other differences included joined hyphenated words, changed ligatures, and incorrect chunk boundaries. Complete JSON responses alone did not establish valid evidence or correct finding categories.
-
-A subsequent local replay of those saved responses checked the whitespace-only locator without another provider call. Seven of the 17 candidates passed every evidence check and were saved in an isolated database; the remaining candidates were rejected. Stored excerpts matched their original chunk substrings and offsets. History, findings, and evidence remained available through the API after application restart. This replay verifies the binding and storage path for recorded responses, not a new live run or semantic accuracy. Existing completed results are not rewritten.
-
-### Live result before the quality changes
-
-A fresh live run on 26 September 2026 used the same paper and `dots-studio/dots-3-note-preview:free`, with reasoning retained, an 8,192-token output limit, and a 180-second request timeout. The PDF was downloaded and parsed again into 6 pages, 5 sections, and 14 chunks. Both model requests returned HTTP 200 and `finish_reason: stop`; analysis completed in 108.44 seconds without an automatic retry or model fallback.
-
-Of 27 candidates, 7 passed all evidence checks and were saved with 7 evidence records; 20 were rejected. Every saved excerpt matched its original chunk substring, page, and character offsets. Analysis history, findings, and evidence were unchanged after application restart. The provider reported zero cost for this run, which does not guarantee future pricing or availability. The check used a separate temporary database and PDF cache, both removed afterwards; existing project data was not changed.
-
-Review of the saved findings identified three limitations:
-
-- A sentence about future work was classified as `research_problem`.
-- A limitation began with 'Its performance' without naming the subject. The surrounding source referred specifically to the k-means implementation, not the whole library.
-- Some later technical sections retained an `introduction` label. Page numbers and character offsets were valid, but those section labels were inaccurate.
-
-This run verifies the processing and persistence path for one paper, not content acceptance or reliability across different layouts. The next checks should address category definitions, self-contained findings, and section recognition, then evaluate a small sample of papers. A `supported` result confirms source binding, not that its category or interpretation is correct.
-
-### Quality changes and verification
-
-The prompt now defines the four categories and asks for explicit subjects and supporting context. A subsequent live run on 26 September 2026 used the 100,000-token limit, 600-second request timeout, and 30-minute run timeout. Both requests completed without truncation, taking 142.53 seconds in total for analysis. Five findings passed source checks and were saved with five evidence records. Research problems and limitations had no accepted findings and remained `unavailable`. Retrieval after application restart matched the saved results. This was a fresh service call, not a replay.
-
-The model no longer classified the future-work sentence as a research problem in this sample. Its k-means limitation candidate named the component explicitly, but did not pass the quotation checks, so it was not published. This shows improvement in the targeted wording, not complete coverage or semantic accuracy. The rejection of useful candidates still needs evaluation.
-
-That run used an intermediate detector which found eight sections. It exposed a title without a following blank line. After adding the consecutive-numbering rule, a separate reparse found nine sections and 16 chunks. Sections 2 to 5 kept their original titles under `unknown`. Every new chunk matched its original page-text slice at the recorded offsets. The final parser adjustment passed local regression checks but was not followed by another live model run. No existing document or analysis was rewritten.
-
-Verification passed 28 temporary regression checks and the eight existing backend tests. Temporary tests and data were removed after checking. The PDF library also reported that optional `fontTools` support was missing for some embedded fonts. No dependency was installed as part of this change; text extraction around these fonts still needs review. Further papers are needed to assess category quality, rejected evidence, and heading detection across layouts.
+Recorded local checks passed 28 temporary regression checks and eight existing backend tests. Earlier runs exposed category and section errors. The final parser adjustment passed local checks but was not followed by another live analysis run. These historical results do not replace current acceptance checks or evaluation across more papers.

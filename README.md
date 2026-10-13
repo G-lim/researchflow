@@ -8,7 +8,7 @@ How effectively can a web-based system extract, organise, and synthesise evidenc
 
 ## MVP Goal
 
-The MVP will process one paper at a time. It will retrieve a machine-readable open-access PDF or accept a user-provided PDF that they may process, analyse its full text, and return structured findings with supporting evidence. Uploading a file does not establish its access rights or licence.
+The MVP analyses one paper per run. It retrieves a machine-readable open-access PDF or accepts a user-provided PDF that the user has permission to process, analyses its full text, and returns structured findings with supporting evidence. Uploading a file does not establish its access rights or licence.
 
 ### In Scope
 
@@ -16,7 +16,7 @@ The MVP will process one paper at a time. It will retrieve a machine-readable op
 - View paper metadata and abstracts
 - Save and manage papers in a research library
 - Process one machine-readable open-access PDF at a time
-- Accept a manually uploaded PDF as a fallback through the backend; the frontend upload control is still needed
+- Upload a PDF from the paper details page when automatic retrieval is unavailable or fails
 - Extract text while keeping page and section information
 - Identify the research problem, methodology, key findings, and limitations
 - Link every finding to a page, section, and source excerpt
@@ -31,16 +31,16 @@ The MVP will process one paper at a time. It will retrieve a machine-readable op
 - Research gap discovery
 - Automatic production of a complete literature review
 
-## Planned Workflow
+## User Workflow
 
 ```text
 Search for a paper
   ↓
-Find an open-access PDF
-  ↓
 Save the paper record
   ↓
-Retrieve and parse the full text
+Select an open-access PDF source or upload a PDF
+  ↓
+Retrieve or upload the file, then parse the full text
   ↓
 Identify sections and split the text
   ↓
@@ -106,33 +106,33 @@ researchflow/
 └── README.md
 ```
 
-The local `experiments/` folder is ignored by Git. Formal application tests will be stored inside the frontend or backend and committed.
+The local `experiments/` folder is ignored by Git. Existing backend tests are in `backend/tests/`. The development workflow describes how to run checks and handle temporary test files.
 
 ## Current Status
 
-The backend supports paper discovery, a saved library, full-text PDF retrieval and parsing, and structured findings linked to source evidence. The frontend and backend are developed separately; frontend integration still needs to be checked.
+The frontend connects to the backend for paper search, library queries and collections, PDF retrieval and upload, processing status, analysis, and source evidence. Final end-to-end acceptance and evaluation across different papers remain outstanding.
 
-Completed:
+Implemented:
 
 - OpenAlex search and abstract retrieval
 - SQLite paper saving, listing, details, and deletion
+- Library search, filters, sorting, and collection management
+- Search cache fallback with cache timestamps
 - Open-access PDF source lookup and bounded downloads
+- Manual PDF upload with confirmation of the paper and permission to process it
 - Background document processing, status queries, and retries
 - Page text, sections, and source-linked chunks stored in SQLite
 - Queued full-text analysis, status queries, and explicit retries
 - Four finding categories with exact source excerpts, page locations, and evidence queries
-- OpenRouter structured analysis feasibility test using an abstract
-- Initial system architecture
-- Initial data model
-- Initial frontend and backend API contract
-- Full-text PDF feasibility check
-- Two-person development workflow
-- Fixed responses for the first frontend slice
+- Frontend controls for library management, PDF processing, analysis results, and evidence
+
+A recorded live check completed PDF processing, analysis, evidence storage, and result retrieval after restart for one paper. Key results are in `backend/README.md`; evaluation across more papers remains outstanding.
+
+The MVP needs machine-readable PDFs. Publisher restrictions may block downloads, and unusual layouts can affect text and section extraction. Evidence links locate source text but do not guarantee correct conclusions.
 
 Next:
 
-- Connect the frontend library and PDF processing views to the backend
+- Verify the complete frontend and backend workflow in the demonstration environment
 - Check extraction quality on papers with different layouts
-- Connect the frontend analysis status, findings, and evidence views
-- Configure an OpenRouter model and check real full-text results
+- Check failure, retry, and result recovery behaviour with the configured analysis service
 - Evaluate accuracy and traceability

@@ -10,9 +10,9 @@ The API uses JSON. Timestamps use UTC in ISO 8601 format. Database IDs are integ
 
 ## Contract Change Rules
 
-This file is the shared contract between the frontend and backend. The first development slice uses sections 1 to 3. Its fixed frontend responses are stored in `mock-data/first-slice.json`.
+This file is the shared contract between the frontend and backend. The original search, save, and list examples for sections 1 to 3 are stored in `mock-data/first-slice.json`. They do not cover the full current API.
 
-After frontend work starts, a breaking field or status change needs agreement from both developers. Update this contract and the mock data before changing the applications. FastAPI will provide the machine-readable API schema after backend implementation starts.
+A breaking field or status change needs agreement from both developers. Update this contract and any affected mock data with the application changes. The running backend provides the machine-readable schema at `/openapi.json` and interactive documentation at `/docs`.
 
 ## Workflow States
 

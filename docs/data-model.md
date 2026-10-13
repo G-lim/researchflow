@@ -1,10 +1,10 @@
 # Data Model
 
-The MVP stores one paper's full-text analysis at a time. The model keeps paper metadata, document processing, structured findings, and source evidence separate.
+Each analysis run covers one document from one paper. The database can retain multiple papers, documents, and analysis runs. The model keeps paper metadata, document processing, structured findings, and source evidence separate.
 
 ## Design Rules
 
-Implemented tables cover Paper, Collection, PaperCollection, Document, DocumentPage, Section, Chunk, AnalysisRun, Finding, and Evidence.
+Implemented tables cover Paper, Collection, PaperCollection, Document, DocumentPage, Section, Chunk, AnalysisRun, Finding, Evidence, and SearchCache.
 
 - Every supported finding must link to at least one evidence record.
 - Every evidence record must link to stored source text.
@@ -262,7 +262,7 @@ The stored excerpt must match the related chunk text. An excerpt is not valid ev
 
 The `evidence` table cascades from Finding and references Chunk. Each `(finding_id, chunk_id, start_offset, end_offset)` tuple is unique. Page checks require `start_page >= 1` and `end_page = start_page`, matching the current single-page chunk design. `is_primary` is stored as 0 or 1, with at most one primary row per finding enforced by a partial unique index.
 
-Before insertion, the backend verifies that the chunk belongs to both the analysed document and the submitted batch. It locates the model quotation using whitespace-only normalisation and rejects multiple matches. The unique match maps back to original offsets; the stored excerpt is taken from the unchanged chunk, not from the model response. `chunk.source_text[start_offset:end_offset]` must equal `source_excerpt`. Deduplication uses chunk ID and both offsets. No schema migration or rewriting of existing evidence is needed. Page numbers come from the chunk. Section names come from its related section at query time, not from model output. Page-relative evidence positions are `chunk.start_character + start_offset` and `chunk.start_character + end_offset`.
+Before insertion, the backend verifies that the chunk belongs to both the analysed document and the submitted batch. It locates the model quotation using whitespace-only normalisation and rejects multiple matches. The unique match maps back to original offsets; the stored excerpt is taken from the unchanged chunk, not from the model response. `chunk.source_text[start_offset:end_offset]` must equal `source_excerpt`. Deduplication uses chunk ID and both offsets. Page numbers come from the chunk. Section names come from its related section at query time, not from model output. Page-relative evidence positions are `chunk.start_character + start_offset` and `chunk.start_character + end_offset`.
 
 Transaction checks enforce same-document links, excerpt equality, exactly one primary evidence row per supported finding, and the presence of evidence. Foreign keys alone do not enforce all these rules. Existing parsed source text is immutable while analysis history refers to it.
 
