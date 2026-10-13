@@ -4,7 +4,7 @@
 //   - 创建新集合
 //   - 重命名 / 删除集合
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import {
   listCollections,
   createCollection,
@@ -14,7 +14,7 @@ import {
 import LoadingSpinner from './LoadingSpinner'
 import ErrorMessage from './ErrorMessage'
 
-function CollectionsPanel() {
+function CollectionsPanel({ onLoaded }) {
   const [collections, setCollections] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -25,12 +25,13 @@ function CollectionsPanel() {
   const [expanded, setExpanded] = useState(true)
 
   // ---------- 加载集合列表 ----------
-  const loadCollections = async () => {
+  const loadCollections = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
       const list = await listCollections()
       setCollections(list)
+      onLoaded?.(list)
     } catch (err) {
       setError(
         err.response?.data?.error?.message ||
@@ -39,11 +40,11 @@ function CollectionsPanel() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [onLoaded])
 
   useEffect(() => {
     loadCollections()
-  }, [])
+  }, [loadCollections])
 
   // ---------- 创建集合 ----------
   const handleCreate = async (e) => {
@@ -148,11 +149,18 @@ function CollectionsPanel() {
             </button>
           </form>
 
-          {error && <ErrorMessage message={error} />}
+          {error && (
+            <>
+              <ErrorMessage message={error} />
+              <button type="button" onClick={loadCollections} disabled={loading}>
+                Retry loading collections
+              </button>
+            </>
+          )}
 
           {loading && <LoadingSpinner />}
 
-          {!loading && collections.length === 0 && (
+          {!loading && !error && collections.length === 0 && (
             <p className="empty-hint">
               No collections yet. Create one to organise your papers.
             </p>

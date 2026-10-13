@@ -86,14 +86,15 @@ export async function getSectionChunks(sectionId) {
  *
  * @param {number} paperId
  * @param {File} file - 浏览器 File 对象（来自 <input type="file">）
+ * @param {boolean} confirmed - Whether the user confirmed the paper and permission to process it.
  * @returns {Promise<object>} 新建的 document 状态对象
  */
-export async function uploadDocument(paperId, file) {
+export async function uploadDocument(paperId, file, confirmed = false) {
   // 用 FormData 构造 multipart/form-data 请求体
   const formData = new FormData()
   formData.append('file', file)
   // 后端要求 confirmed=true，表示用户确认该 PDF 属于这篇论文
-  formData.append('confirmed', 'true')
+  formData.append('confirmed', String(confirmed))
 
   const response = await client.post(
     `/papers/${paperId}/documents/upload`,

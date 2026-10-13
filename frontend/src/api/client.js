@@ -10,7 +10,7 @@ const client = axios.create({
   // 因为 vite.config.js 里配置了 /api 代理到后端 8000 端口
   // 所以这里只要用相对路径 /api 即可
   baseURL: '/api',
-  timeout: 15000,  // 15 秒超时
+  timeout: 60000,  // Allow the upstream lookup to time out and return cached results.
   headers: {
     'Content-Type': 'application/json',
   },

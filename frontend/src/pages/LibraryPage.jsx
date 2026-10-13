@@ -5,9 +5,8 @@
 //   - 已保存论文列表，支持删除
 //   - 点击标题进入详情页
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { listSavedPapers, deletePaper } from '../api/papers'
-import { listCollections } from '../api/collections'
 import LoadingSpinner from '../components/LoadingSpinner'
 import ErrorMessage from '../components/ErrorMessage'
 import CollectionsPanel from '../components/CollectionsPanel'
@@ -21,13 +20,14 @@ function LibraryPage({ onSelectPaper }) {
   const [filters, setFilters] = useState(DEFAULT_FILTERS)
   const [collections, setCollections] = useState([])
 
-  // ---------- 加载集合（用于下拉选项） ----------
-  useEffect(() => {
-    listCollections()
-      .then(setCollections)
-      .catch(() => {
-        // 静默失败：下拉列表为空也不影响论文列表
-      })
+  const handleCollectionsLoaded = useCallback((list) => {
+    setCollections(list)
+    setFilters((current) =>
+      current.collection_id != null &&
+      !list.some((collection) => collection.id === current.collection_id)
+        ? { ...current, collection_id: null }
+        : current
+    )
   }, [])
 
   // ---------- 加载论文列表 ----------
@@ -86,7 +86,7 @@ function LibraryPage({ onSelectPaper }) {
     <div className="library-page">
       <h2>My Research Library</h2>
 
-      <CollectionsPanel />
+      <CollectionsPanel onLoaded={handleCollectionsLoaded} />
 
       <LibraryFilters
         filters={filters}

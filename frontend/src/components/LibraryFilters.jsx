@@ -2,11 +2,10 @@
 // 包含：关键词搜索、排序、年份范围、集合、文档状态、分析状态
 //
 // 交互设计：
-//   - 关键词输入有 300ms 防抖，避免每敲一个字都发请求
-//   - 其他下拉/输入立即触发 onChange
+//   - 筛选条件立即更新，由资料库页面统一延迟请求
 //   - "Clear" 按钮恢复默认筛选
 
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 
 // 默认筛选：不设任何条件，按保存时间倒序
 export const DEFAULT_FILTERS = {
@@ -31,26 +30,13 @@ const STATUS_OPTIONS = [
 ]
 
 function LibraryFilters({ filters, onChange, collections }) {
-  const [localQ, setLocalQ] = useState(filters.q || '')
   const [expanded, setExpanded] = useState(false)
 
-  // q 输入的防抖：300ms 后同步到父组件的 filters
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      if (localQ !== filters.q) {
-        onChange({ ...filters, q: localQ })
-      }
-    }, 300)
-    return () => clearTimeout(timer)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [localQ])
-
   const update = (patch) => {
-    onChange({ ...filters, ...patch })
+    onChange((current) => ({ ...current, ...patch }))
   }
 
   const clearAll = () => {
-    setLocalQ('')
     onChange({ ...DEFAULT_FILTERS })
   }
 
@@ -70,8 +56,8 @@ function LibraryFilters({ filters, onChange, collections }) {
         <input
           type="search"
           placeholder="Search title, author, abstract, or DOI..."
-          value={localQ}
-          onChange={(e) => setLocalQ(e.target.value)}
+          value={filters.q}
+          onChange={(e) => update({ q: e.target.value })}
         />
 
         <select

@@ -32,6 +32,7 @@ function PaperDetailPage({ paperId, onBack }) {
   const [paper, setPaper] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
+  const [paperAttempt, setPaperAttempt] = useState(0)
 
   // ---------- PDF 源查找 ----------
   const [sources, setSources] = useState(null)
@@ -48,9 +49,13 @@ function PaperDetailPage({ paperId, onBack }) {
   const [activeDocument, setActiveDocument] = useState(null)
   const [polling, setPolling] = useState(false)
   const [processingError, setProcessingError] = useState(null)
+  const [statusError, setStatusError] = useState(null)
 
   // ---------- 解析结果：章节与 chunks ----------
   const [sections, setSections] = useState([])
+  const [loadingSections, setLoadingSections] = useState(false)
+  const [sectionsError, setSectionsError] = useState(null)
+  const [chunkErrors, setChunkErrors] = useState({})
   const [chunksBySection, setChunksBySection] = useState({})
   const [expandedSectionId, setExpandedSectionId] = useState(null)
   const [loadingChunksFor, setLoadingChunksFor] = useState(null)
@@ -73,32 +78,15 @@ function PaperDetailPage({ paperId, onBack }) {
       }
     }
     load()
-  }, [paperId])
+  }, [paperId, paperAttempt])
 
   // ---------- Effect 2：检查是否已有 document ----------
   useEffect(() => {
     if (!paper || !paper.documents || paper.documents.length === 0) return
     const latest = paper.documents[0]
     setActiveDocumentId(latest.id)
-
-    const isFinished =
-      latest.parsing_status === 'completed' ||
-      latest.retrieval_status === 'failed' ||
-      latest.parsing_status === 'failed'
-
-    if (isFinished) {
-      getDocumentStatus(latest.id)
-        .then((doc) => {
-          setActiveDocument(doc)
-          if (doc.parsing_status === 'completed') {
-            loadParsedContent(doc.id)
-          }
-        })
-        .catch(() => {})
-    } else {
-      setPolling(true)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    setStatusError(null)
+    setPolling(true)
   }, [paper])
 
   // ---------- Effect 3：轮询 document 状态 ----------
@@ -126,12 +114,15 @@ function PaperDetailPage({ paperId, onBack }) {
         }
       } catch (err) {
         if (!cancelled) {
-          timer = setTimeout(poll, POLL_INTERVAL_MS * 2)
+          setPolling(false)
+          setStatusError(
+            err.response?.data?.error?.message || 'Unable to check document status. The task may still be running.'
+          )
         }
       }
     }
 
-    timer = setTimeout(poll, POLL_INTERVAL_MS)
+    poll()
 
     return () => {
       cancelled = true
@@ -139,12 +130,18 @@ function PaperDetailPage({ paperId, onBack }) {
     }
   }, [activeDocumentId, polling])
 
-  const loadParsedContent = async (documentId) => {
+  async function loadParsedContent(documentId) {
+    setLoadingSections(true)
+    setSectionsError(null)
     try {
       const list = await getDocumentSections(documentId)
       setSections(list)
     } catch (err) {
-      console.warn('Failed to load sections:', err)
+      setSectionsError(
+        err.response?.data?.error?.message || 'Failed to load sections. Please try again.'
+      )
+    } finally {
+      setLoadingSections(false)
     }
   }
 
@@ -168,6 +165,7 @@ function PaperDetailPage({ paperId, onBack }) {
   const handleStartProcessing = async (sourceUrl) => {
     setStarting(true)
     setProcessingError(null)
+    setStatusError(null)
     try {
       const doc = await startDocumentProcessing(paperId, sourceUrl)
       setActiveDocumentId(doc.id)
@@ -187,6 +185,7 @@ function PaperDetailPage({ paperId, onBack }) {
   const handleRetry = async () => {
     if (!activeDocumentId) return
     setProcessingError(null)
+    setStatusError(null)
     try {
       const doc = await retryDocument(activeDocumentId)
       setActiveDocument(doc)
@@ -202,13 +201,21 @@ function PaperDetailPage({ paperId, onBack }) {
   const handleUpload = async (event) => {
     const file = event.target.files?.[0]
     if (!file) return
+    const confirmed = window.confirm(
+      `Confirm that "${file.name}" belongs to "${paper.title}" and that you have permission to process it.`
+    )
+    if (!confirmed) {
+      event.target.value = ''
+      return
+    }
 
     setUploading(true)
     setUploadError(null)
     setProcessingError(null)
+    setStatusError(null)
 
     try {
-      const doc = await uploadDocument(paperId, file)
+      const doc = await uploadDocument(paperId, file, confirmed)
       setActiveDocumentId(doc.id)
       setActiveDocument(doc)
       setPolling(true)
@@ -234,12 +241,20 @@ function PaperDetailPage({ paperId, onBack }) {
 
     if (chunksBySection[sectionId]) return
 
+    await loadChunks(sectionId)
+  }
+
+  const loadChunks = async (sectionId) => {
+    setChunkErrors((current) => ({ ...current, [sectionId]: null }))
     setLoadingChunksFor(sectionId)
     try {
       const list = await getSectionChunks(sectionId)
       setChunksBySection((prev) => ({ ...prev, [sectionId]: list }))
     } catch (err) {
-      console.warn('Failed to load chunks:', err)
+      setChunkErrors((current) => ({
+        ...current,
+        [sectionId]: err.response?.data?.error?.message || 'Failed to load excerpts. Please try again.',
+      }))
     } finally {
       setLoadingChunksFor(null)
     }
@@ -263,6 +278,9 @@ function PaperDetailPage({ paperId, onBack }) {
           ← Back to Library
         </button>
         <ErrorMessage message={error} />
+        <button type="button" onClick={() => setPaperAttempt((value) => value + 1)}>
+          Retry loading paper
+        </button>
       </div>
     )
   }
@@ -363,9 +381,18 @@ function PaperDetailPage({ paperId, onBack }) {
           <h3>Full-Text Documents</h3>
 
           {processingError && <ErrorMessage message={processingError} />}
+          {statusError && (
+            <>
+              <ErrorMessage message={statusError} />
+              <button type="button" onClick={() => { setStatusError(null); setPolling(true) }}>
+                Retry document status
+              </button>
+            </>
+          )}
+          {activeDocumentId && !activeDocument && polling && <LoadingSpinner />}
 
           {/* 情况 1：无 document，也没查过源 */}
-          {!activeDocument && !sources && (
+          {!activeDocumentId && !sources && (
             <>
               <p className="empty-hint">
                 No full-text document attached yet.
@@ -476,6 +503,8 @@ function PaperDetailPage({ paperId, onBack }) {
                     onClick={() => {
                       setActiveDocument(null)
                       setActiveDocumentId(null)
+                      setPolling(false)
+                      setStatusError(null)
                       setSources(null)
                       setProcessingError(null)
                       setUploadError(null)
@@ -490,7 +519,19 @@ function PaperDetailPage({ paperId, onBack }) {
           )}
 
           {/* 情况 6：解析完成，展示章节列表 */}
-          {isCompleted && sections.length > 0 && (
+          {isCompleted && loadingSections && <LoadingSpinner />}
+          {isCompleted && sectionsError && (
+            <>
+              <ErrorMessage message={sectionsError} />
+              <button type="button" onClick={() => loadParsedContent(activeDocumentId)}>
+                Retry loading sections
+              </button>
+            </>
+          )}
+          {isCompleted && !loadingSections && !sectionsError && sections.length === 0 && (
+            <p className="empty-hint">No sections were extracted.</p>
+          )}
+          {isCompleted && !loadingSections && !sectionsError && sections.length > 0 && (
             <div className="sections-block">
               <h4>Extracted Sections ({sections.length})</h4>
               <ul className="section-list">
@@ -525,6 +566,14 @@ function PaperDetailPage({ paperId, onBack }) {
                         {loadingChunksFor === section.id && (
                           <p className="empty-hint">Loading excerpts…</p>
                         )}
+                        {chunkErrors[section.id] && (
+                          <>
+                            <ErrorMessage message={chunkErrors[section.id]} />
+                            <button type="button" onClick={() => loadChunks(section.id)}>
+                              Retry loading excerpts
+                            </button>
+                          </>
+                        )}
                         {chunksBySection[section.id]?.map((chunk) => (
                           <div key={chunk.id} className="chunk-item">
                             <div className="chunk-meta">
@@ -549,7 +598,7 @@ function PaperDetailPage({ paperId, onBack }) {
         </section>
 
         {/* 情况 7：解析完成后启动全文分析 */}
-        {isCompleted && <AnalysisPanel documentId={activeDocumentId} />}
+        {isCompleted && <AnalysisPanel key={activeDocumentId} documentId={activeDocumentId} />}
       </article>
     </div>
   )

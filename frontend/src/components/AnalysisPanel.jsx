@@ -7,7 +7,7 @@
 //
 // 折叠：有历史记录时默认收起，点击 Show 展开
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import {
   startAnalysis,
   getAnalysisStatus,
@@ -53,8 +53,14 @@ function AnalysisPanel({ documentId }) {
   const [starting, setStarting] = useState(false)
   const [polling, setPolling] = useState(false)
   const [error, setError] = useState(null)
+  const [historyError, setHistoryError] = useState(null)
+  const [historyAttempt, setHistoryAttempt] = useState(0)
+  const [statusError, setStatusError] = useState(null)
 
   const [findings, setFindings] = useState([])
+  const [loadingFindings, setLoadingFindings] = useState(false)
+  const [findingsError, setFindingsError] = useState(null)
+  const [evidenceErrors, setEvidenceErrors] = useState({})
   const [findingDetails, setFindingDetails] = useState({})
   const [expandedFindingId, setExpandedFindingId] = useState(null)
   const [loadingFindingFor, setLoadingFindingFor] = useState(null)
@@ -65,13 +71,29 @@ function AnalysisPanel({ documentId }) {
   // 这样 retry 后能从「本次启动」而不是「首次创建」开始计时
   const startedAtRef = useRef(null)
 
+  const loadFindings = useCallback(async (analysisId) => {
+    setLoadingFindings(true)
+    setFindingsError(null)
+    try {
+      setFindings(await listFindings(analysisId))
+    } catch (err) {
+      setFindingsError(
+        err.response?.data?.error?.message || 'Failed to load findings. Please try again.'
+      )
+    } finally {
+      setLoadingFindings(false)
+    }
+  }, [])
+
   // ---------- Effect 1：加载分析历史 ----------
   useEffect(() => {
+    let cancelled = false
     async function load() {
       setLoadingHistory(true)
-      setError(null)
+      setHistoryError(null)
       try {
         const result = await listDocumentAnalyses(documentId, 1, 20)
+        if (cancelled) return
         const latest = result.analyses[0]
         if (latest) {
           setAnalysis(latest)
@@ -86,23 +108,27 @@ function AnalysisPanel({ documentId }) {
           }
         }
       } catch (err) {
-        console.warn('Failed to load analysis history:', err)
+        if (!cancelled) setHistoryError(
+          err.response?.data?.error?.message || 'Failed to load analysis history. Please try again.'
+        )
       } finally {
-        setLoadingHistory(false)
+        if (!cancelled) setLoadingHistory(false)
       }
     }
     load()
-  }, [documentId])
+    return () => { cancelled = true }
+  }, [documentId, historyAttempt, loadFindings])
 
   // ---------- Effect 2：轮询分析状态 ----------
   useEffect(() => {
     if (!analysis || !polling) return
+    const analysisId = analysis.id
     let cancelled = false
     let timer = null
 
     const poll = async () => {
       try {
-        const updated = await getAnalysisStatus(analysis.id)
+        const updated = await getAnalysisStatus(analysisId)
         if (cancelled) return
         setAnalysis(updated)
 
@@ -116,7 +142,10 @@ function AnalysisPanel({ documentId }) {
         }
       } catch (err) {
         if (!cancelled) {
-          timer = setTimeout(poll, POLL_INTERVAL_MS * 2)
+          setPolling(false)
+          setStatusError(
+            err.response?.data?.error?.message || 'Unable to check analysis status. The task may still be running.'
+          )
         }
       }
     }
@@ -127,10 +156,8 @@ function AnalysisPanel({ documentId }) {
       cancelled = true
       if (timer) clearTimeout(timer)
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [analysis?.id, polling])
+  }, [analysis?.id, polling, loadFindings])
 
-  // ---------- Effect 3：运行时更新已用时间 ----------
   // ---------- Effect 3：运行时每秒更新已用时间 ----------
   useEffect(() => {
     const isRunning =
@@ -171,6 +198,7 @@ function AnalysisPanel({ documentId }) {
   const handleStart = async () => {
     setStarting(true)
     setError(null)
+    setStatusError(null)
     try {
       const created = await startAnalysis(documentId)
       startedAtRef.current = Date.now() // 从本次启动开始计时
@@ -190,6 +218,7 @@ function AnalysisPanel({ documentId }) {
   const handleRetry = async () => {
     if (!analysis) return
     setError(null)
+    setStatusError(null)
     try {
       const updated = await retryAnalysis(analysis.id)
       startedAtRef.current = Date.now() // retry 后从当前时刻重新计时
@@ -212,12 +241,20 @@ function AnalysisPanel({ documentId }) {
     setExpandedFindingId(findingId)
     if (findingDetails[findingId]) return
 
+    await loadEvidence(findingId)
+  }
+
+  const loadEvidence = async (findingId) => {
+    setEvidenceErrors((current) => ({ ...current, [findingId]: null }))
     setLoadingFindingFor(findingId)
     try {
       const detail = await getFinding(findingId)
       setFindingDetails((prev) => ({ ...prev, [findingId]: detail }))
     } catch (err) {
-      console.warn('Failed to load finding detail:', err)
+      setEvidenceErrors((current) => ({
+        ...current,
+        [findingId]: err.response?.data?.error?.message || 'Failed to load evidence. Please try again.',
+      }))
     } finally {
       setLoadingFindingFor(null)
     }
@@ -229,6 +266,18 @@ function AnalysisPanel({ documentId }) {
       <div className="analysis-panel">
         <h3>Full-Text Analysis</h3>
         <LoadingSpinner />
+      </div>
+    )
+  }
+
+  if (historyError) {
+    return (
+      <div className="analysis-panel">
+        <h3>Full-Text Analysis</h3>
+        <ErrorMessage message={historyError} />
+        <button type="button" onClick={() => setHistoryAttempt((value) => value + 1)}>
+          Retry loading history
+        </button>
       </div>
     )
   }
@@ -247,6 +296,8 @@ function AnalysisPanel({ documentId }) {
     if (isFailed)
       return `Analysis #${analysis.id} — failed. Click Show for details.`
     if (isCompleted) {
+      if (loadingFindings) return `Analysis #${analysis.id} — loading findings…`
+      if (findingsError) return `Analysis #${analysis.id} — findings could not be loaded.`
       const count = findings.length
       return `Analysis #${analysis.id} — completed · ${count} finding${
         count !== 1 ? 's' : ''
@@ -263,6 +314,15 @@ function AnalysisPanel({ documentId }) {
           {expanded ? 'Hide' : 'Show'}
         </button>
       </div>
+
+      {statusError && (
+        <>
+          <ErrorMessage message={statusError} />
+          <button type="button" onClick={() => { setStatusError(null); setPolling(true) }}>
+            Retry status check
+          </button>
+        </>
+      )}
 
       {!expanded && <p className="empty-hint">{collapsedSummary}</p>}
 
@@ -332,11 +392,20 @@ function AnalysisPanel({ documentId }) {
                 {analysis.service_model}
               </p>
 
-              {findings.length === 0 && (
+              {loadingFindings && <LoadingSpinner />}
+              {findingsError && (
+                <>
+                  <ErrorMessage message={findingsError} />
+                  <button type="button" onClick={() => loadFindings(analysis.id)}>
+                    Retry loading findings
+                  </button>
+                </>
+              )}
+              {!loadingFindings && !findingsError && findings.length === 0 && (
                 <p className="empty-hint">No findings were extracted.</p>
               )}
 
-              {FINDING_TYPES.map(({ key, label }) => {
+              {!loadingFindings && !findingsError && FINDING_TYPES.map(({ key, label }) => {
                 const group = findings.filter((f) => f.finding_type === key)
                 const unavailable =
                   group.length === 1 &&
@@ -382,6 +451,14 @@ function AnalysisPanel({ documentId }) {
                                 <p className="empty-hint">
                                   Loading sources…
                                 </p>
+                              )}
+                              {evidenceErrors[finding.id] && (
+                                <>
+                                  <ErrorMessage message={evidenceErrors[finding.id]} />
+                                  <button type="button" onClick={() => loadEvidence(finding.id)}>
+                                    Retry loading evidence
+                                  </button>
+                                </>
                               )}
                               {findingDetails[finding.id]?.evidence?.map(
                                 (ev) => (
