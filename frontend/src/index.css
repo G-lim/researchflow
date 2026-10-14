@@ -365,3 +365,20 @@ input::placeholder { color: var(--muted); }
   gap: 8px;
   cursor: pointer;
 }
+
+/* ---------- Analysis settings form ---------- */
+.settings-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* 模型建议标签：去掉 button 默认边框，用胶囊样式 */
+.model-tag {
+  border: none;
+  cursor: pointer;
+}
+.model-tag:hover:not(:disabled) {
+  background: var(--primary);
+  color: #fff;
+}
