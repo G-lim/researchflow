@@ -8,6 +8,7 @@ from app.api.papers import router as papers_router
 from app.api.documents import router as documents_router
 from app.api.analyses import router as analyses_router
 from app.api.collections import router as collections_router
+from app.api.settings import router as settings_router
 from app.core.config import get_settings
 from app.errors import register_error_handlers
 from app.database import initialise_database
@@ -60,6 +61,7 @@ def create_app() -> FastAPI:
     application.include_router(documents_router, prefix="/api")
     application.include_router(analyses_router, prefix="/api")
     application.include_router(collections_router, prefix="/api")
+    application.include_router(settings_router, prefix="/api")
     return application
 
 

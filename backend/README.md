@@ -147,7 +147,27 @@ GET  /api/analyses/{analysis_id}/findings
 GET  /api/findings/{finding_id}
 ```
 
-Set `OPENROUTER_API_KEY` and `OPENROUTER_MODEL` in the backend process environment before starting the server. The model must support structured JSON-schema output. No model is selected automatically. The app does not load `.env` files itself. Missing configuration returns `503` with `analysis_not_configured`; search, saving, and PDF processing still work without these settings. Keep keys out of source files, requests from the frontend, and Git.
+The backend reads `OPENROUTER_API_KEY` and `OPENROUTER_MODEL` from `backend/.env`, with environment variables as a fallback for missing fields. The default model is `anthropic/claude-haiku-5.5`. Only these two fields are read from the file. Models must support structured JSON-schema output and the client's disabled-reasoning setting. A missing key returns `503` with `analysis_not_configured`; search, saving, and PDF processing still work. Keep keys out of source files, logs, and Git.
+
+### Local analysis settings
+
+`GET /api/settings/analysis` returns the saved configuration, or environment defaults when no file entry exists:
+
+```json
+{"model":"anthropic/claude-haiku-5.5","api_key_configured":false,"restart_required":false}
+```
+
+`PUT /api/settings/analysis` accepts `model` and an optional `api_key`. An omitted or blank key keeps the existing file or environment key. The response has the same fields as GET and never includes the key. To change only the model:
+
+```json
+{"model":"anthropic/claude-haiku-5.5"}
+```
+
+Saving writes both settings to `backend/.env` without replacing other entries. The key is stored in plain text; this file is ignored by Git and must not be shared. `api_key_configured` means a key is present, not that it has been accepted by OpenRouter. Saving does not call the provider or incur usage charges.
+
+Restart the backend to apply saved changes. `restart_required` compares the saved settings with the running configuration. Active and queued analyses keep their current configuration until restart; finish them before restarting. Earlier results are not changed. The frontend does not yet provide a settings form.
+
+These endpoints require a loopback client and host. Browser origins must also be an allowed local frontend origin or the backend's own origin. PUT requires JSON. They are for local single-user use, not shared hosting or a public reverse proxy. Invalid fields return `422`, disallowed access returns `403`, and file read or write failures return `503`.
 
 The client uses OpenRouter's [structured output format](https://openrouter.ai/docs/guides/features/structured-outputs), requests compatible provider routing, and validates the response locally. Unsupported models fail instead of falling back to another model or unstructured text. Extracted paper text is sent to OpenRouter and the selected provider. Each run and explicit retry can incur charges.
 

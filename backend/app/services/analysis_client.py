@@ -67,6 +67,7 @@ class AnalysisClient:
             raise analysis_error('analysis_not_configured', 'Configure the analysis service key and model.', 503)
         payload = {
             'model': model, 'stream': False, 'max_tokens': settings['max_tokens'],
+            'reasoning': {'effort': 'none'},
             'provider': {'require_parameters': True, 'allow_fallbacks': False},
             'transforms': [],
             'messages': [
