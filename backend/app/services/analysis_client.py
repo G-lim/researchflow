@@ -86,9 +86,43 @@ class AnalysisClient:
                 async with httpx.AsyncClient(timeout=settings['request_timeout'], transport=self.transport,
                                              follow_redirects=False, trust_env=False) as client:
                     async with client.stream('POST', 'https://openrouter.ai/api/v1/chat/completions',
-                                             headers={'Authorization': f'Bearer {self.api_key}'}, json=payload) as response:
+                                            headers={'Authorization': f'Bearer {self.api_key}'}, json=payload) as response:
                         if response.status_code != 200:
-                            raise analysis_error('analysis_failed', 'The analysis service request failed.', 502, True)
+                            # 读取 OpenRouter 返回的错误体，用于给用户更明确的信息
+                            error_body = bytearray()
+                            async for part in response.aiter_bytes():
+                                error_body.extend(part)
+                                if len(error_body) > 8192:
+                                    break
+
+                            provider_message = ''
+                            try:
+                                parsed = json.loads(error_body)
+                                provider_message = (parsed.get('error') or {}).get('message', '')
+                            except (ValueError, TypeError):
+                                pass
+
+                            # 按状态码映射到不同错误码，附带 OpenRouter 的原始消息
+                            labels = {
+                                400: ('analysis_invalid_request',
+                                    'The model rejected the request. Check the model name and options.'),
+                                401: ('analysis_unauthorized',
+                                    'OpenRouter rejected the API key. Check the key in settings.'),
+                                402: ('analysis_insufficient_credits',
+                                    'OpenRouter requires credits for this model.'),
+                                404: ('analysis_model_not_found',
+                                    'The selected model is not available on OpenRouter.'),
+                                429: ('analysis_rate_limited',
+                                    'OpenRouter rate limit reached. Wait or add credits.'),
+                            }
+                            code, default_message = labels.get(
+                                response.status_code,
+                                ('analysis_failed', 'The analysis service request failed.'),
+                            )
+                            message = provider_message or default_message
+                            # 429、502、503、504 等瞬时错误可以重试；4xx 客户端错误一般不用
+                            retryable = response.status_code in (429, 500, 502, 503, 504)
+                            raise analysis_error(code, message, 502, retryable)
                         body = bytearray()
                         async for part in response.aiter_bytes():
                             body.extend(part)

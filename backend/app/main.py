@@ -31,7 +31,10 @@ def create_app() -> FastAPI:
                 store.recover_interrupted()
             application.state.analysis_store.recover_interrupted()
             runner = DocumentRunner(store)
-            analysis_runner = AnalysisRunner(application.state.analysis_store, application.state.analysis_client)
+            analysis_runner = AnalysisRunner(
+                application.state.analysis_store,
+                lambda: application.state.analysis_client,
+            )
             tasks = [asyncio.create_task(runner.run()), asyncio.create_task(analysis_runner.run())]
             try:
                 yield

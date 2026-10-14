@@ -20,9 +20,11 @@ async def database_call(function, *args):
 
 
 class AnalysisRunner:
-    def __init__(self, store: AnalysisStore, client: AnalysisClient):
+    def __init__(self, store: AnalysisStore, get_client):
+        # get_client 是一个无参回调，每次返回当前的 AnalysisClient
+        # 这样 PUT /api/settings/analysis 更新 app.state 后能立即生效
         self.store = store
-        self.client = client
+        self._get_client = get_client
 
     async def run(self):
         needs_recovery = False
@@ -49,10 +51,13 @@ class AnalysisRunner:
             run, chunks, settings = await database_call(self.store.input, run_id)
             if run.status != 'processing':
                 return
+            # 每次 execute 拿一次 client，让本次 run 用一致的配置；
+            # 下一次 run 会拿到最新的 client
+            client = self._get_client()
             async with asyncio.timeout(settings['run_timeout']):
                 findings, candidate_count = [], 0
                 for batch in make_batches(chunks, settings):
-                    candidates = await self.client.analyse(batch, run.service_model, settings)
+                    candidates = await client.analyse(batch, run.service_model, settings)
                     candidate_count += len(candidates)
                     findings.extend(validate_candidates(candidates, batch, run.document_id))
                 await database_call(self.store.complete, run_id, findings, candidate_count)

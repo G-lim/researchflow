@@ -6,7 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
 from app.core.config import DEFAULT_ANALYSIS_MODEL, get_settings, read_analysis_settings, save_analysis_settings
 from app.errors import ApiError
 from app.schemas.errors import ErrorResponse
-
+from app.services.analysis_client import AnalysisClient
 
 class AnalysisSettingsUpdate(BaseModel):
     model_config = ConfigDict(extra='forbid')
@@ -68,4 +68,8 @@ def get_analysis_settings(request: Request):
 
 @router.put('/settings/analysis', response_model=AnalysisSettingsStatus)
 def update_analysis_settings(body: AnalysisSettingsUpdate, request: Request):
-    return configuration_status(request, *save_analysis_settings(body.model, body.api_key.get_secret_value()))
+    model, key = save_analysis_settings(body.model, body.api_key.get_secret_value())
+    # 下面两行是关键：动态刷新运行时状态
+    request.app.state.analysis_client = AnalysisClient(key)
+    request.app.state.analysis_model = model
+    return configuration_status(request, model, key)
