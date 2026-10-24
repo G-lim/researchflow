@@ -47,7 +47,7 @@ http://127.0.0.1:5173
 
 Set `FRONTEND_ORIGINS` to a comma-separated list when the frontend uses other origins.
 
-Casual OpenAlex requests can run without a key. Set `OPENALEX_API_KEY` in the local environment when the project needs its own allowance. Never store the key in a source file.
+The backend can send OpenAlex requests without a key. Access and limits depend on OpenAlex. Set `OPENALEX_API_KEY` in the process environment if needed. Only the two OpenRouter settings are loaded from `backend/.env`; other settings use process environment variables.
 
 ## Paper Search
 
@@ -165,7 +165,7 @@ The backend reads `OPENROUTER_API_KEY` and `OPENROUTER_MODEL` from `backend/.env
 
 Saving writes both settings to `backend/.env` without replacing other entries. The key is stored in plain text; this file is ignored by Git and must not be shared. `api_key_configured` means a key is present, not that it has been accepted by OpenRouter. Saving does not call the provider or incur usage charges.
 
-Restart the backend to apply saved changes. `restart_required` compares the saved settings with the running configuration. Active and queued analyses keep their current configuration until restart; finish them before restarting. Earlier results are not changed. The frontend does not yet provide a settings form.
+The frontend analysis panel provides a settings form. Saving updates the running client and model without a restart, so a successful save returns `restart_required: false`. New analyses use the selected model. Existing and queued runs keep their recorded model and limits; each run takes the current client key when processing starts. A run already processing keeps its client. To use a different model after a failure, start a new run with **Run with current settings** rather than retrying the old run. Earlier results are not changed. If `.env` is edited manually, restart the backend to apply it.
 
 These endpoints require a loopback client and host. Browser origins must also be an allowed local frontend origin or the backend's own origin. PUT requires JSON. They are for local single-user use, not shared hosting or a public reverse proxy. Invalid fields return `422`, disallowed access returns `403`, and file read or write failures return `503`.
 
@@ -185,7 +185,7 @@ The prompt asks for the paper's current question, methods, results, and explicit
 
 Open a finding to inspect its source excerpts, sections, pages, and character offsets. Evidence must match uniquely in its stored chunk, allowing whitespace differences only. `supported` confirms a source link, not that the conclusion is correct. Matching and offset rules are described in `../docs/architecture.md` and `../docs/api-contract.md`.
 
-Analysis accepts at most 200,000 source characters in up to 100 batches of 12,000 characters. New runs allow 100,000 output tokens, including reasoning, with a 600-second request timeout and a 30-minute total timeout. Responses are limited to 8 MiB and 20 candidates per batch. Oversized inputs, invalid responses, and service failures stop the run without publishing partial results. Retries keep their original settings; create a new run to use changed limits.
+Analysis accepts at most 200,000 source characters in up to 100 batches of 12,000 characters. New runs request at most 100,000 output tokens with a 600-second request timeout and a 30-minute total timeout. The client sends `reasoning.effort: none`; models must support this request setting. Responses are limited to 8 MiB and 20 candidates per batch. Oversized inputs, invalid responses, and service failures stop the run without publishing partial results. Retries keep their original settings; create a new run to use changed limits.
 
 Check that the selected model supports the input and output budgets. Provider limits and availability can change; longer responses may increase latency and cost. The backend does not lower the budget or switch models automatically.
 
@@ -193,6 +193,6 @@ The SQLite queue has one analysis worker alongside the document worker. Keep one
 
 ### Verification summary
 
-A live check on 26 September 2026 used *Scikit-learn: Machine Learning in Python* and `dots-studio/dots-3-note-preview:free`. Search, PDF retrieval, parsing, analysis, evidence storage, and result retrieval after restart completed. The later run saved five findings with five source excerpts; research problems and limitations remained `unavailable`.
+Checks on 24 October 2026 used a separate database and configuration. Eight existing search tests passed. Live OpenAlex search and one PDF download succeeded. Uploading and parsing the Reflexion PDF produced 19 pages and 50 chunks. API checks covered paper management, collections, cache fallback, settings and saved result retrieval after recreating the application. Upstream failures and model retry responses were simulated.
 
-Recorded local checks passed 28 temporary regression checks and eight existing backend tests. Earlier runs exposed category and section errors. The final parser adjustment passed local checks but was not followed by another live analysis run. These historical results do not replace current acceptance checks or evaluation across more papers.
+A completed analysis from 14 October contained 34 findings and 40 evidence records. All 40 excerpts matched their stored source locations during the later checks. This is a source-location check, not an accuracy score. No new live model analysis was run on 24 October, and browser behaviour was not tested in those checks.
