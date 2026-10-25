@@ -1,130 +1,58 @@
 # ResearchFlow
 
-ResearchFlow is a web-based research information management system. It aims to extract and organise evidence from full academic papers while keeping each finding linked to its source.
+ResearchFlow helps users search and organise papers, process a PDF, and read four types of findings with source excerpts. It uses React, FastAPI and SQLite and is intended for local, single-user use.
 
-## Research Question
+## Start the backend
 
-How effectively can a web-based system extract, organise, and synthesise evidence from full academic papers while keeping the results accurate and traceable?
+Use Python 3.12. From the project folder, run these commands in Windows PowerShell:
 
-## MVP Goal
-
-The MVP will process one paper at a time. It will accept a legally accessible, machine-readable open-access PDF, analyse its full text, and return structured findings with supporting evidence.
-
-### In Scope
-
-- Search academic papers using OpenAlex
-- View paper metadata and abstracts
-- Save and manage papers in a research library
-- Process one machine-readable open-access PDF at a time
-- Extract text while keeping page and section information
-- Identify the research problem, methodology, key findings, and limitations
-- Link every finding to a page, section, and source excerpt
-- Show clear processing states and failure reasons
-
-### Out of Scope for the MVP
-
-- Scanned PDFs and optical character recognition
-- HTML full-text processing
-- Access to papers behind a paywall
-- Multi-paper comparison and synthesis
-- Research gap discovery
-- Automatic production of a complete literature review
-
-## Planned Workflow
-
-```text
-Search for a paper
-  ↓
-Find an open-access PDF
-  ↓
-Save the paper record
-  ↓
-Retrieve and parse the full text
-  ↓
-Identify sections and split the text
-  ↓
-Extract structured findings
-  ↓
-Link findings to source evidence
-  ↓
-Review the findings and evidence
+```powershell
+cd backend
+py -3.12 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m uvicorn app.main:app
 ```
 
-## MVP Success Criteria
+For later starts, run only the last command from `backend`. Keep one backend process running. On Windows, do not use `--reload`, as PDF processing needs a compatible subprocess event loop.
 
-- A suitable PDF can pass through the complete workflow
-- The system keeps page and section information during text extraction
-- Every finding has at least one supporting source excerpt
-- Unsupported information is marked as unavailable
-- Retrieval, parsing, and analysis failures are shown clearly
-- The first workflow is checked with three to five suitable papers
-- The completed MVP is later evaluated with about 10 to 15 papers
+The API runs at http://127.0.0.1:8000. Interactive API documentation is at http://127.0.0.1:8000/docs.
 
-## Future Work
+## Start the frontend
 
-Multi-paper comparison will start only after single-paper analysis is stable and evaluated. A later version may let users select two to five analysed papers, compare their research problems, methods, findings, and limitations, and trace each comparison result back to its evidence.
+Use a Node.js version supported by Vite 8. Open another terminal in the project folder:
 
-HTML processing and scanned document support may be considered later. They are not part of the first implementation.
-
-## Technology Stack
-
-### Frontend
-
-- React
-
-### Backend
-
-- Python
-- FastAPI
-
-### Database
-
-- SQLite
-
-### External Services
-
-- OpenAlex API
-- OpenRouter API
-
-## Project Structure
-
-```text
-researchflow/
-├── backend/
-│   └── README.md
-├── frontend/
-│   └── README.md
-├── docs/
-│   ├── architecture.md
-│   ├── data-model.md
-│   ├── api-contract.md
-│   ├── development-workflow.md
-│   └── mock-data/
-│       └── first-slice.json
-├── .gitignore
-└── README.md
+```powershell
+cd frontend
+npm install
+npm install --no-save --package-lock=false axios
+npm run dev
 ```
 
-The local `experiments/` folder is ignored by Git. Formal application tests will be stored inside the frontend or backend and committed.
+The current dependency files do not list Axios, although the frontend imports it. The second install command adds it locally without changing those files. Repeat it after a clean dependency installation until the declaration is fixed.
 
-## Current Status
+Open http://localhost:5173, or the address shown by Vite. For later starts, run `npm run dev` from `frontend`. The development server forwards `/api` requests to the backend on port 8000. If Vite uses a different port, add its origin to `FRONTEND_ORIGINS` for the analysis settings form; see the [backend README](backend/README.md).
 
-The project is preparing for implementation with separate frontend and backend work.
+## Configure analysis
 
-Completed:
+Open a saved paper and select **Configure Analysis** or **Edit settings** in the analysis panel. Enter an OpenRouter API key and a compatible model, then save. The default model is `anthropic/claude-haiku-5.5`. Leaving the key blank keeps an existing key.
 
-- OpenAlex search and abstract retrieval feasibility test
-- OpenRouter structured analysis feasibility test using an abstract
-- Initial system architecture
-- Initial data model
-- Initial frontend and backend API contract
-- Full-text PDF feasibility check
-- Two-person development workflow
-- Fixed responses for the first frontend slice
+Settings are saved in `backend/.env` and apply to new analyses without restarting. Retrying an old run keeps its original model. Use **Run with current settings** to start a new run after changing models. Suggested models may not all be available or compatible. The backend requires structured JSON output and requests reasoning to be disabled.
 
-Next:
+The key is stored in plain text and is not returned by the settings API. Do not share `.env`. Search, saving and PDF processing work without an OpenRouter key. Analysis sends extracted text to OpenRouter and the selected provider and may incur charges.
 
-- Set up the React and FastAPI applications
-- Implement paper search, paper saving, and the saved paper list in parallel
-- Add committed tests for the first backend endpoints
-- Connect the first frontend slice to the real backend
+## Use the project
+
+1. Search for a paper and save it.
+2. Open **My Library** to find the paper or organise it into a collection.
+3. Open its details and select a PDF source. If downloading fails, upload a PDF that belongs to the paper and that you have permission to process.
+4. Wait for parsing to complete, then start analysis.
+5. Read the research problems, methods, findings and limitations. Open the evidence to check source excerpts and page references.
+6. Return to the paper later to read saved results. Failed tasks show an error and can be retried where supported.
+
+Paper records and results are stored in `backend/data/researchflow.sqlite3`. PDFs are stored in `backend/data/pdfs/`. These files remain after the application stops. Deleting a saved paper also removes its documents and analysis results.
+
+## Limits
+
+The prototype analyses one paper at a time and needs PDFs with readable text. It does not perform OCR, interpret figures, or compare several papers. Downloads may fail, and unusual layouts can affect text and section extraction. Matching an excerpt confirms its source location, but users still need to check whether it supports the finding.
+
+See the [backend README](backend/README.md) for configuration, APIs and tests, or the [frontend README](frontend/README.md) for frontend details.

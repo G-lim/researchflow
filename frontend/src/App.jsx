@@ -1,121 +1,74 @@
+// App.jsx 是应用的根组件
+// 管理三个视图：搜索页、资料库页、论文详情页
+// 用本地 state 做页面切换，不引入路由库
+
 import { useState } from 'react'
-import heroImg from './assets/hero.png'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
-import './App.css'
+import SearchPage from './pages/SearchPage'
+import LibraryPage from './pages/LibraryPage'
+import PaperDetailPage from './pages/PaperDetailPage'
 
 function App() {
-  const [count, setCount] = useState(0)
+  // 当前视图：'search' / 'library' / 'detail'
+  const [view, setView] = useState('search')
+  // 详情页要展示的论文 id（只在 view === 'detail' 时有效）
+  const [selectedPaperId, setSelectedPaperId] = useState(null)
+
+  // 从资料库点击某篇论文时调用
+  const openDetail = (paperId) => {
+    setSelectedPaperId(paperId)
+    setView('detail')
+  }
 
   return (
-    <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
-        </div>
-        <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.jsx</code> and save to test <code>HMR</code>
-          </p>
-        </div>
-        <button
-          type="button"
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
-        >
-          Count is {count}
-        </button>
-      </section>
+    <div className="app">
+      {/* 页面顶部标题区域 */}
+      <header className="app-header">
+        <h1>ResearchFlow</h1>
+        <p>AI-Assisted Research Information Management System</p>
+      </header>
 
-      <div className="ticks"></div>
+      {/* Tab 滑块：用 id 选中，样式在 CSS 的 #app-tabs 里 */}
+      {view !== 'detail' && (
+        <nav id="app-tabs">
+          <div className="track">
+            {/* 滑块：根据当前 view 平移 */}
+            <span
+              className="indicator"
+              style={{
+                transform:
+                  view === 'search' ? 'translateX(0)' : 'translateX(100%)',
+              }}
+            />
+            <button
+              type="button"
+              className={view === 'search' ? 'active' : ''}
+              onClick={() => setView('search')}
+            >
+              Search
+            </button>
+            <button
+              type="button"
+              className={view === 'library' ? 'active' : ''}
+              onClick={() => setView('library')}
+            >
+              My Library
+            </button>
+          </div>
+        </nav>
+      )}
 
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
-        </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
-
-      <div className="ticks"></div>
-      <section id="spacer"></section>
-    </>
+      {/* 主内容区：根据 view 渲染不同页面 */}
+      <main className="app-main">
+        {view === 'search' && <SearchPage />}
+        {view === 'library' && <LibraryPage onSelectPaper={openDetail} />}
+        {view === 'detail' && (
+          <PaperDetailPage
+            paperId={selectedPaperId}
+            onBack={() => setView('library')}
+          />
+        )}
+      </main>
+    </div>
   )
 }
 

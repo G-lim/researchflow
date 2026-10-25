@@ -1,8 +1,10 @@
 # Data Model
 
-The MVP stores one paper's full-text analysis at a time. The model keeps paper metadata, document processing, structured findings, and source evidence separate.
+Each analysis run covers one document from one paper. The database can retain multiple papers, documents, and analysis runs. The model keeps paper metadata, document processing, structured findings, and source evidence separate.
 
 ## Design Rules
+
+Implemented tables cover Paper, Collection, PaperCollection, Document, DocumentPage, Section, Chunk, AnalysisRun, Finding, Evidence, and SearchCache.
 
 - Every supported finding must link to at least one evidence record.
 - Every evidence record must link to stored source text.
@@ -57,20 +59,44 @@ Represents an academic paper found through OpenAlex and saved in the research li
 
 The abstract is not accepted as evidence for a full-text finding.
 
+## Collection and PaperCollection
+
+Papers and collections have a many-to-many relationship through `paper_collections`.
+
+| `collections` field | Type | Rules |
+|---|---|---|
+| id | integer | Primary key, generated on insertion |
+| name | text | Not null; application normalises whitespace and validates 1 to 100 characters |
+| name_key | text | Not null, unique; Unicode case-folded normalised name |
+| created_at | datetime | Not null, UTC creation time |
+| updated_at | datetime | Not null, UTC creation or latest rename time |
+
+| `paper_collections` field | Type | Rules |
+|---|---|---|
+| paper_id | integer | Foreign key to Paper, deletes cascade |
+| collection_id | integer | Foreign key to Collection, deletes cascade |
+| created_at | datetime | Not null, UTC membership creation time |
+
+The composite primary key `(paper_id, collection_id)` prevents duplicate memberships. An index on `collection_id` supports group queries and counts. The API derives `paper_count` from memberships rather than storing a separate counter.
+
+Deleting a collection removes only its memberships, not papers or their analysis data. Deleting a paper removes its memberships but keeps the collections. Startup adds both tables and the index if missing, without rebuilding existing tables. Repeated initialisation preserves records. Write transactions keep resource checks and membership changes together.
+
 ## Document
 
-Represents one retrieved full-text version of a paper.
+Represents one downloaded or uploaded full-text version of a paper.
 
 | Field | Type | Rules | Description |
 |---|---|---|---|
 | id | integer | Primary key | Internal document ID |
 | paper_id | integer | Foreign key, not null | Related paper |
-| source_url | string | Not null | Open-access PDF location |
+| source_kind | string | `download` or `upload`; defaults to `download` | How the file entered the system |
+| original_filename | string or null | Uploads only; not used as a storage path | Filename without directory components |
+| source_url | string or null | Required for downloads; null for uploads | Open-access PDF location |
 | source_format | string | Must be `pdf` in the MVP | Source format |
-| access_type | string | Must be `open_access` in the MVP | Access classification |
+| access_type | string | `open_access` for downloads; `unknown` for uploads | Access classification, not inferred from upload success |
 | licence | string or null | | Licence supplied by the source, when available |
 | local_file_path | string or null | | Path inside the local file cache |
-| file_sha256 | string or null | | File checksum used to detect duplicate content |
+| file_sha256 | string or null | | File checksum used to bind analysis to its source; uploads are not deduplicated |
 | file_size_bytes | integer or null | | Retrieved file size |
 | page_count | integer or null | | Number of PDF pages after parsing |
 | retrieval_status | string | Not null | Retrieval state |
@@ -83,6 +109,16 @@ Represents one retrieved full-text version of a paper.
 | updated_at | datetime | Not null | Last state change time |
 
 A paper may have more than one document because an open-access location or file version may change. Only a successfully parsed document can start full-text analysis.
+
+Downloads allow one document per `(paper_id, source_url)` pair. Uploads have a null source URL and each receive a new ID. Failed processing records remain available for inspection. Retrying a download retrieves the source again. Retrying an upload preserves its file and queues only parsing. A missing uploaded file needs a new upload. Documents with analysis history cannot replace their source through retry.
+
+Uploaded bytes are saved before their record becomes visible to the queue. Accepted uploads have retrieval `completed` and parsing `pending`; claiming the job sets parsing to `processing`. Startup removes abandoned upload staging files and marks interrupted parsing as failed without deleting the uploaded PDF.
+
+Startup upgrades older document tables in a transaction. It preserves existing IDs, the document ID sequence, source metadata and child records. Existing rows become `download` records. Foreign keys are checked before the migration commits. Stop older backend processes before upgrading and keep a database backup.
+
+## DocumentPage
+
+The `document_pages` table stores each extracted page before section splitting. Its composite primary key is `(document_id, page_number)`. `document_id` references Document, `page_number` starts at 1, and `source_text` contains the unchanged extracted page text. Blank pages have an empty string. Deleting a document removes its pages.
 
 ## Section
 
@@ -135,6 +171,8 @@ Represents a traceable piece of extracted text used for analysis.
 
 Chunks must keep the original text. Cleaned text may be stored separately later, but it must not replace the source used for evidence.
 
+The current implementation always assigns a section, using `unknown` when needed. Each chunk stays on one page and within one section, with at most 2,000 characters. Character offsets are zero-based and end-exclusive within DocumentPage.source_text. The chunk text must equal that page substring. Section and chunk sequence numbers start at 1. Composite foreign keys keep chunks in the same document as their section and page.
+
 ## AnalysisRun
 
 Represents one full-text analysis attempt for a parsed document.
@@ -155,6 +193,12 @@ Represents one full-text analysis attempt for a parsed document.
 | created_at | datetime | Not null | Record creation time |
 
 Secret keys must never be stored in `settings_json`.
+
+For `full-text-v1`, `analysis_runs` has a foreign key to Document with cascading deletion. A partial unique index on `document_id` for `pending` and `processing` rows prevents concurrent active runs for the same document. A queue index on `(status, id)` supports oldest-first processing. Status values and `analysis_version = 'full-text-v1'` have database checks.
+
+`settings_json` stores the input file checksum, ordered chunk IDs, a SHA-256 digest of their ordered IDs and text, and the batch, input, output, and timeout limits specified in `architecture.md`. The digest uses UTF-8 JSON pairs of ID and source text, with no extra separator whitespace. It detects stored text changes even when the PDF checksum has not changed. The service name is `OpenRouter`; the model comes from configuration and is fixed for the run. These settings describe an attempt but cannot guarantee identical model output on repetition.
+
+Retry reuses a failed run, keeps its model and settings, clears errors and processing timestamps, and returns it to pending. `created_at` does not change. A completed run cannot be retried or overwritten; another analysis creates another row. `completed_at` is set only on success. Pending work survives restart, while interrupted processing becomes failed.
 
 ## Finding
 
@@ -187,9 +231,13 @@ unavailable
 rejected
 ```
 
-`supported` means the finding has source evidence. `unavailable` means the paper does not provide enough information. `rejected` means a candidate statement failed the evidence check.
+`supported` means the finding has source evidence that passed the location and exact-text checks. It does not certify that the statement follows from that evidence. `unavailable` means this run found no validated finding for the category; it is not proof that the paper lacks that information. `rejected` is reserved for a candidate that failed the evidence check. The first implementation discards rejected candidates rather than storing their text.
 
 The model does not store one large summary field. A category may contain several findings, and each finding may use different evidence.
+
+The `findings` table cascades from AnalysisRun. `(analysis_run_id, finding_type, sequence_number)` is unique, with sequence numbers starting at 1 within each category. Database checks restrict categories and support states. Supported content must be non-empty; unavailable content must be null. Each category either has supported findings or one unavailable row, never both. Unavailable rows have no evidence.
+
+The backend inserts findings and evidence and marks the run completed in the same transaction. An incomplete or failed run exposes no findings. An all-empty response across every batch can produce four unavailable rows. A run with candidates but no valid candidate fails with `evidence_missing` instead.
 
 ## Evidence
 
@@ -203,14 +251,20 @@ Links a finding to an exact source excerpt.
 | source_excerpt | text | Not null | Exact supporting text |
 | start_page | integer | Not null | First source page |
 | end_page | integer | Not null | Last source page |
-| start_offset | integer or null | | Start position inside the chunk |
-| end_offset | integer or null | | End position inside the chunk |
+| start_offset | integer | Not null, at least 0 | Start position inside the chunk |
+| end_offset | integer | Not null, greater than start_offset | End-exclusive position inside the chunk |
 | is_primary | boolean | Default false | Main evidence shown first |
 | created_at | datetime | Not null | Record creation time |
 
 One finding may have several evidence records. One chunk may support several findings.
 
 The stored excerpt must match the related chunk text. An excerpt is not valid evidence if it only repeats the finding without linking to the source.
+
+The `evidence` table cascades from Finding and references Chunk. Each `(finding_id, chunk_id, start_offset, end_offset)` tuple is unique. Page checks require `start_page >= 1` and `end_page = start_page`, matching the current single-page chunk design. `is_primary` is stored as 0 or 1, with at most one primary row per finding enforced by a partial unique index.
+
+Before insertion, the backend verifies that the chunk belongs to both the analysed document and the submitted batch. It locates the model quotation using whitespace-only normalisation and rejects multiple matches. The unique match maps back to original offsets; the stored excerpt is taken from the unchanged chunk, not from the model response. `chunk.source_text[start_offset:end_offset]` must equal `source_excerpt`. Deduplication uses chunk ID and both offsets. Page numbers come from the chunk. Section names come from its related section at query time, not from model output. Page-relative evidence positions are `chunk.start_character + start_offset` and `chunk.start_character + end_offset`.
+
+Transaction checks enforce same-document links, excerpt equality, exactly one primary evidence row per supported finding, and the presence of evidence. Foreign keys alone do not enforce all these rules. Existing parsed source text is immutable while analysis history refers to it.
 
 ## Processing Status Values
 
@@ -245,7 +299,17 @@ Some rules, such as requiring evidence for a supported finding, need transaction
 
 Deleting a paper removes its documents, sections, chunks, analysis runs, findings, and evidence in one controlled transaction. The related cached PDF and parsing files must also be removed.
 
+Deletion is blocked while any document for the paper is queued or processing. The implemented cascade covers documents, pages, sections, chunks, analysis runs, findings, and evidence. Cached PDFs are staged before the database transaction commits; a failed transaction restores them. Startup recovers any interrupted file cleanup.
+
+Deletion is also blocked while any related analysis is pending or processing. The check and deletion share a write transaction so a new analysis cannot enter the queue between them. Finding lists and evidence details use read transactions so concurrent deletion cannot produce a supported finding without its evidence.
+
 Deleting one analysis run removes only its findings and evidence. It does not delete the paper, document, sections, or chunks.
+
+## SearchCache
+
+`search_cache` stores successful search responses separately from saved papers. It has three fields: `cache_key` (text primary key), `response_json` (not-null text) and `cached_at` (not-null UTC timestamp).
+
+The key encodes the response version, upstream base URL, trimmed query, page and page size. Each successful search replaces the corresponding response and timestamp. Cache reads validate the stored response and accept ages from zero to seven days. There are no foreign keys to paper or analysis records. Deleting a saved paper does not remove search results, and caching a result does not save a paper.
 
 ## Future Multi-Paper Comparison
 

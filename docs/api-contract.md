@@ -10,9 +10,9 @@ The API uses JSON. Timestamps use UTC in ISO 8601 format. Database IDs are integ
 
 ## Contract Change Rules
 
-This file is the shared contract between the frontend and backend. The first development slice uses sections 1 to 3. Its fixed frontend responses are stored in `mock-data/first-slice.json`.
+This file is the shared contract between the frontend and backend. The original search, save, and list examples for sections 1 to 3 are stored in `mock-data/first-slice.json`. They do not cover the full current API.
 
-After frontend work starts, a breaking field or status change needs agreement from both developers. Update this contract and the mock data before changing the applications. FastAPI will provide the machine-readable API schema after backend implementation starts.
+A breaking field or status change needs agreement from both developers. Update this contract and any affected mock data with the application changes. The running backend provides the machine-readable schema at `/openapi.json` and interactive documentation at `/docs`.
 
 ## Workflow States
 
@@ -75,13 +75,19 @@ Successful response: `200 OK`
     }
   ],
   "page": 1,
-  "has_more": false
+  "has_more": false,
+  "from_cache": false,
+  "cached_at": "2026-10-01T01:00:00Z"
 }
 ```
 
 The abstract is discovery metadata. It is not full-text evidence.
 
-If the external paper search fails, the API returns `502 Bad Gateway` with the `paper_search_failed` error code.
+Each request tries OpenAlex first. A successful result, including an empty list, replaces the matching SQLite cache entry. Cache keys include the trimmed query, page, fixed page size (25), upstream base URL and response version. Query case and internal spacing remain significant. Caching does not save papers to the library.
+
+If external search fails, including rate limiting or timeout, the API can return the matching cached result with `200 OK` when it is no more than seven days old. It sets `from_cache` to `true` and retains the original UTC `cached_at` time. The frontend should label this as a cached result, not current search data. Reading the cache does not extend its age.
+
+Live results use `from_cache: false`. `cached_at` is the successful cache-write time, or `null` if writing failed; a cache-write failure does not discard a live result. Missing, expired, unreadable or invalid cached data cannot serve as fallback. In those cases an external search failure returns `502 Bad Gateway` with `paper_search_failed`. Failed searches never overwrite a successful cached result.
 
 ## 2. Save Paper
 
@@ -132,6 +138,10 @@ Successful response: `201 Created`
 
 If the OpenAlex ID already exists, the API returns `409 Conflict`.
 
+The backend trims the OpenAlex ID and title. The ID must use the full form `https://openalex.org/W123456789`, and the title must not be blank. Citation counts must be non-negative integers. A publication year may be `null` or an integer from 1 to 9999. Invalid fields return `422` with `invalid_request`.
+
+Saving a duplicate does not change the existing record. Successful saves include UTC creation and update timestamps.
+
 ## 3. List Saved Papers
 
 ```http
@@ -157,6 +167,32 @@ Successful response: `200 OK`
 ```
 
 `document_status` is `null` before document processing starts. `latest_analysis_status` is `null` before an analysis exists. The frontend must not treat either value as an empty string.
+
+Without parameters, the list contains all saved papers, ordered by descending internal ID (newest saved first). An empty result returns `{"papers": []}`. The response fields stay the same when filters are used. There is no pagination in this MVP.
+
+Optional query parameters:
+
+| Parameter | Values and behaviour |
+|---|---|
+| `q` | Substring search in title, individual authors, abstract or DOI; at most 200 characters after trimming |
+| `year_from`, `year_to` | Inclusive publication year bounds, each from 1 to 9999; the lower bound must not exceed the upper bound |
+| `collection_id` | Positive signed 64-bit ID of an existing collection |
+| `document_status` | `pending`, `processing`, `completed`, `failed` or `not_started` |
+| `analysis_status` | `pending`, `processing`, `completed`, `failed` or `not_started` |
+| `sort_by` | `saved_at` (default), `publication_year`, `title` or `citation_count` |
+| `sort_order` | `desc` (default) or `asc` |
+
+Filters combine with AND. Keyword search matches any of the four fields. English matching ignores case; Chinese text matches literally. `%`, `_` and backslashes are ordinary characters, not wildcards. A blank trimmed query applies no keyword filter. Year filters exclude papers with an unknown year.
+
+`document_status` follows the newest document by ID: either failed stage means `failed`, completed parsing means `completed`, queued retrieval means `pending`, and other work means `processing`. `analysis_status` follows the newest analysis by ID across all documents belonging to the paper. `not_started` matches the absence of a document or analysis respectively; the returned status remains `null`.
+
+`saved_at` orders by insertion ID. Other sorts use descending ID to break ties. Unknown publication years come last in both directions. Title sorting uses SQLite's English case-insensitive order, not language-specific collation.
+
+An unknown collection returns `404` with `collection_not_found`; an existing empty collection returns an empty list. Invalid parameters return `422` with `invalid_request`.
+
+```http
+GET /api/papers?q=neural&year_from=2020&collection_id=1&sort_by=publication_year&sort_order=desc
+```
 
 ## 4. Get Saved Paper
 
@@ -191,6 +227,8 @@ Successful response: `200 OK`
 }
 ```
 
+A paper with no documents returns `"documents": []`. A missing paper returns `404` with `paper_not_found`.
+
 ## 5. Delete Saved Paper
 
 ```http
@@ -200,6 +238,10 @@ DELETE /api/papers/{paper_id}
 Successful response: `204 No Content`
 
 Deleting a paper also removes its documents, sections, chunks, analyses, findings, evidence, and related cache files.
+
+Deletion also removes the paper's collection memberships, but keeps the collections. A queued or processing document or analysis prevents deletion with `409` and `invalid_resource_state` (`retryable: true`). A missing or already deleted paper returns `404` with `paper_not_found`.
+
+Paper IDs for detail and deletion must be positive integers within SQLite's signed 64-bit range. Invalid IDs return `422` with `invalid_request`.
 
 ## 6. Find Full-Text Sources
 
@@ -225,6 +267,8 @@ Successful response: `200 OK`
 ```
 
 An empty `sources` array means no supported source was found.
+
+Only locations with `is_oa: true` and a direct `pdf_url` are returned. URLs are deduplicated. A source lookup failure returns `502` with `full_text_source_lookup_failed`; it is not reported as an empty source list.
 
 ## 7. Start Full-Text Retrieval and Parsing
 
@@ -260,6 +304,49 @@ Accepted response: `202 Accepted`
 
 The backend validates the source before retrieval. It rejects unsupported formats and locations that do not use HTTP or HTTPS.
 
+The submitted URL must match a current source returned by OpenAlex for this saved paper. An unlisted URL returns `400` with `full_text_source_not_found`. Local addresses, credentials in URLs, and unsupported ports return `400` with `unsupported_source_url`, or a failed document if discovered during DNS resolution or a redirect.
+
+The same paper/source pair cannot be started twice (`409`). Failed documents use the retry endpoint. The response is a document status object; the worker continues after the request ends. It processes one document at a time.
+
+### Upload a PDF Instead of Downloading It
+
+```http
+POST /api/papers/{paper_id}/documents/upload
+Content-Type: multipart/form-data
+```
+
+Use this endpoint for a locally available PDF when automatic retrieval fails. The paper must already be saved. Send these form fields:
+
+| Field | Value |
+|---|---|
+| `file` | One PDF file, at most 25 MiB |
+| `confirmed` | `true`: the user confirms that the file belongs to this paper and that they may process it |
+
+For browser requests, use `FormData` and let the browser set the multipart boundary. Do not send JSON or manually set `Content-Type`.
+
+The response is `202 Accepted` with the full document status object. For example, these fields identify an accepted upload:
+
+```json
+{
+  "id": 11,
+  "paper_id": 1,
+  "source_kind": "upload",
+  "original_filename": "paper.pdf",
+  "source_url": null,
+  "source_format": "pdf",
+  "access_type": "unknown",
+  "licence": null,
+  "retrieval_status": "completed",
+  "parsing_status": "pending"
+}
+```
+
+Acceptance means the file has been saved, not that parsing has succeeded. Poll `GET /api/documents/{document_id}` as for downloaded PDFs. Successful uploads use the same section, chunk, analysis and evidence endpoints. An upload creates a new document ID, even if its filename or contents match an earlier file. It does not replace failed downloads or existing evidence.
+
+The backend checks the file signature and size, uses its own storage filename, and removes failed partial uploads. The displayed original filename has directory components removed. It does not verify the paper's identity, access rights or licence from the uploaded bytes. The paper record retains its DOI and landing-page link. Uploads are not automatically labelled open access.
+
+Missing fields return `422` with `invalid_request`. A false confirmation returns `400` with `upload_confirmation_required`. A missing paper returns `404`. An invalid PDF signature returns `400` with `invalid_pdf`; an oversized file returns `413` with `pdf_too_large`. Storage failure returns `503` with `pdf_upload_failed`. Encrypted, damaged, scanned and over-limit documents fail later during parsing with the existing document error codes.
+
 ## 8. Get Document Status
 
 ```http
@@ -289,6 +376,10 @@ Successful response: `200 OK`
 
 Local file paths and checksums are internal and are not returned to the client.
 
+All document status responses include `source_kind` (`download` or `upload`) and `original_filename` (null for downloads). Uploaded documents have a null `source_url`, `access_type: "unknown"` and null `licence`. Downloaded documents retain their existing source URL and open-access metadata.
+
+The status response also includes `created_at` and `updated_at`. Retrieval failures set both stages to `failed`; parsing failures keep retrieval `completed`. Queued work survives a restart. Interrupted active work returns `processing_interrupted` and needs a retry. Missing documents return `404` with `document_not_found`.
+
 ## 9. Retry Failed Document Processing
 
 ```http
@@ -310,6 +401,8 @@ Accepted response: `202 Accepted`
 ```
 
 If the document is already processing or completed, the API returns `409 Conflict`.
+
+Retry returns the full document status object. For downloads, it resets both stages to `pending`, removes the cached download and partial text, then downloads the same source again. For uploads, it keeps the original file, checksum, size and retrieval time, leaves retrieval `completed`, and resets parsing to `pending`. A missing uploaded file returns `409` with `pdf_file_missing`; upload the file as a new document instead. Documents with analysis history cannot be retried to replace their source.
 
 ## 10. List Document Sections
 
@@ -337,6 +430,8 @@ Successful response: `200 OK`
 
 This endpoint returns `409 Conflict` if document parsing is not complete.
 
+Unknown headings use `section_type: "unknown"`; their text is still stored and queryable. Section numbers follow document order.
+
 ## 11. List Section Chunks
 
 ```http
@@ -361,6 +456,12 @@ Successful response: `200 OK`
 ```
 
 The response contains source text because users need to inspect evidence. It must not contain local file paths.
+
+Each chunk also returns `document_id`, `start_character`, and `end_character`. The character offsets are zero-based and end-exclusive within the extracted page text. Chunks contain at most 2,000 characters, do not overlap, and never cross a page boundary, so `start_page` equals `end_page`.
+
+`GET /api/documents/{document_id}/chunks` returns the same `chunks` wrapper for all sections, ordered by document-wide sequence number. It returns `409` before parsing completes. Missing sections return `404` with `section_not_found`.
+
+Sections 12 to 17 describe the implemented analysis endpoints. Starting or retrying analysis needs a configured OpenRouter key and model. Reading existing results and history does not.
 
 ## 12. Start Full-Text Analysis
 
@@ -392,6 +493,12 @@ Accepted response: `202 Accepted`
 
 Analysis can start only after document parsing is complete. Otherwise, the API returns `409 Conflict`.
 
+`analysis_version` defaults to `full-text-v1`; other versions and unknown request fields return `422` with `invalid_request`. A missing document returns `404` with `document_not_found`. A parsed document without chunks returns `409` with `invalid_resource_state`.
+
+Only one pending or processing run is allowed per document. A duplicate start returns `409` with `invalid_resource_state`, without creating another run or making another service request. A new run after completion keeps the previous results. Missing `OPENROUTER_API_KEY` or `OPENROUTER_MODEL` returns `503` with `analysis_not_configured` before queueing.
+
+The backend checks the limits in `architecture.md` before queueing: at most 200,000 source characters and 100 whole-chunk batches, each containing at most 12,000 source characters. Exceeding a limit returns `422` with `analysis_input_limit`; it never queues a truncated input. Accepted work runs in the background. `202` confirms queue acceptance, not successful analysis.
+
 ## 13. Get Analysis Status
 
 ```http
@@ -411,9 +518,14 @@ Successful response: `200 OK`
   "error_code": null,
   "error_message": null,
   "started_at": "2026-09-02T01:20:02Z",
-  "completed_at": "2026-09-02T01:21:10Z"
+  "completed_at": "2026-09-02T01:21:10Z",
+  "created_at": "2026-09-02T01:20:00Z"
 }
 ```
+
+Status responses also include `created_at`. Pending timestamps are null, processing sets `started_at`, and completion sets `completed_at`. Failures set `error_code` and `error_message` and leave `completed_at` null. A missing analysis returns `404` with `analysis_not_found`. Status responses do not expose service keys, local paths, raw provider responses, or internal settings.
+
+The library's `latest_analysis_status` field reports the most recently created analysis across the paper's documents, or null when no run exists. It does not mean that earlier completed results have been replaced.
 
 ## 14. Retry Failed Analysis
 
@@ -422,6 +534,8 @@ POST /api/analyses/{analysis_id}/retry
 ```
 
 This endpoint is valid only when the analysis has failed.
+
+Retry uses the same run ID, original model, settings, and creation time. It clears errors and processing timestamps and processes the full input again. Changing models needs a new run. Missing configuration returns `503`; a missing run returns `404`. A non-failed run or another active run for the document returns `409` with `invalid_resource_state`. Source changes return `409` with `analysis_source_changed` and need a new analysis. Retrying may incur another service charge.
 
 Accepted response: `202 Accepted`
 
@@ -469,6 +583,10 @@ Successful response: `200 OK`
 
 Only completed analyses expose supported findings. Unavailable categories may return a finding with `content` set to `null` and `support_status` set to `unavailable`.
 
+Pending, processing, or failed runs return `409` with `invalid_resource_state`, not partial results. Missing runs return `404` with `analysis_not_found`. An invalid `finding_type` returns `422` with `invalid_request`.
+
+Every completed run represents all four categories. A category without a validated finding contains exactly one unavailable row with null content and `evidence_count: 0`. Unavailable means no validated result was found, not that the paper certainly lacks that information. Results are ordered by the category order above and then by `sequence_number`. Filtering keeps this order. Rejected candidates are never returned.
+
 ## 16. Get Finding and Evidence
 
 ```http
@@ -494,6 +612,8 @@ Successful response: `200 OK`
       "source_excerpt": "Participants were assigned to two groups under controlled conditions.",
       "start_page": 5,
       "end_page": 5,
+      "start_offset": 0,
+      "end_offset": 69,
       "is_primary": true
     }
   ]
@@ -501,6 +621,55 @@ Successful response: `200 OK`
 ```
 
 A supported finding must return at least one evidence record. A rejected candidate is not returned by this public endpoint.
+
+Missing or non-public findings return `404` with `finding_not_found`. Unavailable findings return null content and an empty `evidence` list. Evidence is ordered with the primary record first, then by ID.
+
+`start_offset` and `end_offset` are zero-based, end-exclusive character offsets within the stored chunk. The backend derives them, along with the page and section, from the source text. A source excerpt must match that chunk substring exactly. The example assumes the excerpt begins at the start of its chunk. PDF page numbers start at 1; they are not the paper's printed page labels.
+
+The backend may locate a model quotation despite whitespace differences, but only when it has one matching location in the referenced chunk. The returned `source_excerpt` always contains the original source text, including its spacing and line breaks. Non-whitespace changes and ambiguous locations are rejected. This does not change the response fields or existing stored evidence.
+
+The frontend can use the chunk and existing document/section chunk endpoints to show surrounding text. The `supported` label confirms source binding, not semantic correctness. Users must still be able to inspect the quote and judge whether it supports the statement.
+
+## 17. List Analysis History for a Document
+
+```http
+GET /api/documents/{document_id}/analyses?page=1&page_size=20
+```
+
+Successful response: `200 OK`
+
+```json
+{
+  "analyses": [
+    {
+      "id": 40,
+      "document_id": 10,
+      "status": "completed",
+      "analysis_version": "full-text-v1",
+      "service_name": "OpenRouter",
+      "service_model": "configured-model",
+      "error_code": null,
+      "error_message": null,
+      "started_at": "2026-09-02T01:20:02Z",
+      "completed_at": "2026-09-02T01:21:10Z",
+      "created_at": "2026-09-02T01:20:00Z"
+    }
+  ],
+  "page": 1,
+  "page_size": 20,
+  "has_more": false
+}
+```
+
+`page` defaults to 1 and accepts integers from 1 to 2,147,483,647. `page_size` defaults to 20 and accepts integers from 1 to 100. Invalid pagination or document IDs return `422` with `invalid_request`.
+
+The list includes every analysis state for this document, ordered by descending creation ID. Each item has the same public fields as the status endpoint. Retries retain their original ID, creation time, and list position. Internal settings, credentials, and local paths are not exposed.
+
+An existing document with no analyses returns an empty `analyses` list and `has_more: false`, including when parsing is pending or has failed. A page beyond the available results also returns an empty list. A missing document returns `404` with `document_not_found`. The endpoint is read-only and does not require an analysis key or model.
+
+To restore a page after refresh, get document IDs from `GET /api/papers/{paper_id}`, fetch their analysis history, and use the returned IDs with the status and findings endpoints. Resume polling a pending or processing run; select a completed run to show findings. Keep older completed results available when a newer run fails.
+
+`has_more` indicates another page existed when the request was read. Pages are not a snapshot across requests: newly created runs can shift their boundaries. Restart at page 1 after creating a run, and deduplicate by ID when combining pages.
 
 ## Common HTTP Responses
 
@@ -513,8 +682,10 @@ A supported finding must return at least one evidence record. A rejected candida
 | `400 Bad Request` | Request content is invalid |
 | `404 Not Found` | Resource does not exist |
 | `409 Conflict` | Resource state does not allow the operation |
+| `413 Content Too Large` | Uploaded PDF exceeds the size limit |
 | `422 Unprocessable Content` | Request fields failed validation |
 | `502 Bad Gateway` | An external service failed |
+| `503 Service Unavailable` | The paper library is temporarily unavailable |
 
 ## Error Codes
 
@@ -522,19 +693,83 @@ A supported finding must return at least one evidence record. A rejected candida
 |---|---|---|
 | `invalid_request` | No | Request parameters failed validation |
 | `paper_already_saved` | No | OpenAlex paper already exists |
+| `paper_not_found` | No | Saved paper does not exist |
+| `collection_not_found` | No | Collection does not exist |
+| `collection_name_conflict` | No | Another collection has the same normalised, case-folded name |
+| `database_unavailable` | Yes | A library database operation could not finish; retry later |
 | `paper_search_failed` | Yes | External paper search failed |
 | `full_text_source_not_found` | No | No supported open-access PDF was found |
+| `full_text_source_lookup_failed` | Yes | External source lookup failed |
+| `document_not_found` | No | Document does not exist |
+| `section_not_found` | No | Section does not exist |
 | `unsupported_source_url` | No | Source URL is not supported |
 | `pdf_download_failed` | Yes | PDF retrieval failed |
+| `upload_confirmation_required` | No | User has not confirmed the uploaded paper and permission to process it |
+| `pdf_upload_failed` | Yes | Uploaded PDF could not be saved |
+| `pdf_file_missing` | No | Uploaded file is missing; upload it as a new document |
 | `invalid_pdf` | No | Retrieved file is not a valid PDF |
 | `pdf_text_unavailable` | No | PDF contains no useful extractable text |
 | `pdf_parse_failed` | Yes | PDF parsing failed |
+| `pdf_too_large` | No | PDF exceeds 25 MiB |
+| `pdf_page_limit` | No | PDF has no pages or more than 300 pages |
+| `pdf_text_limit` | No | Extracted text exceeds two million characters |
+| `pdf_encrypted` | No | Encrypted PDFs are not supported |
+| `processing_timeout` | Yes | Processing exceeded 90 seconds |
+| `processing_interrupted` | Yes | Processing stopped before it finished |
+| `processing_failed` | Yes | The document worker could not finish |
+| `cache_cleanup_failed` | Yes | A cached file could not be removed |
 | `analysis_failed` | Yes | External analysis failed |
-| `evidence_missing` | No | A candidate finding has no source evidence |
+| `analysis_not_configured` | No | A service key or explicit model is missing; configure before retrying |
+| `analysis_not_found` | No | Analysis run does not exist |
+| `finding_not_found` | No | Finding does not exist or is not public |
+| `analysis_input_limit` | No | Full input exceeds the analysis limits |
+| `analysis_invalid_response` | Yes | Service output is invalid, truncated, or does not match the schema |
+| `analysis_timeout` | Yes | A request or run exceeded its saved timeout (10 minutes per request and 30 minutes per run for new runs) |
+| `analysis_interrupted` | Yes | Active analysis stopped before completion |
+| `analysis_source_changed` | No | Stored input no longer matches the run; start a new analysis |
+| `evidence_missing` | Yes | Candidates were returned but none passed evidence validation |
 | `invalid_resource_state` | No | Operation is not valid for the current state |
+
+The retryability column describes whether another attempt may help, not whether retry is automatic or free. Document and analysis status objects store `error_code` and `error_message`; the shared HTTP error object also includes `retryable`. Deletion blocked by active processing is the retryable exception to `invalid_resource_state`.
+
+Errors encountered after analysis is accepted appear in its status, not as a later HTTP response to the start request. The worker stops at the failed batch, publishes no partial findings, and makes no automatic repeat requests. If some candidates pass evidence checks, rejected candidates are discarded. If all candidates fail those checks, the run fails with `evidence_missing`. Valid empty responses from every batch instead produce four unavailable categories.
+
+## Collections
+
+A saved paper can belong to several collections. Collections are shared within the local library; there are no accounts or nested groups.
+
+| Method and path | Request | Successful response |
+|---|---|---|
+| `POST /api/collections` | `{"name":"Methods"}` | `201`, collection object |
+| `GET /api/collections` | None | `200`, `{"collections":[...]}` |
+| `PATCH /api/collections/{collection_id}` | `{"name":"New name"}` | `200`, updated collection object |
+| `DELETE /api/collections/{collection_id}` | None | `204`, no body |
+| `PUT /api/collections/{collection_id}/papers/{paper_id}` | None | `204`, no body |
+| `DELETE /api/collections/{collection_id}/papers/{paper_id}` | None | `204`, no body |
+| `GET /api/papers/{paper_id}/collections` | None | `200`, `{"collections":[...]}` |
+
+Collection object:
+
+```json
+{
+  "id": 1,
+  "name": "Methods",
+  "paper_count": 2,
+  "created_at": "2026-09-30T01:00:00Z",
+  "updated_at": "2026-09-30T01:00:00Z"
+}
+```
+
+Names are trimmed and consecutive whitespace becomes one space. The result must contain 1 to 100 characters. Names must be unique after Unicode case folding: `Methods` and `METHODS` conflict. A duplicate create or rename returns `409` with `collection_name_conflict`. Renaming to the collection's own name is allowed. `updated_at` changes on rename; membership changes do not change it.
+
+Lists are ordered by the normalised case-folded name, then ID. Empty lists return `{"collections":[]}`. `paper_count` counts all papers in each collection. To list its papers, use `GET /api/papers?collection_id={collection_id}` and combine the filters above as needed.
+
+Repeated additions and removal of an absent membership return `204` if both resources still exist. Missing collections return `404` with `collection_not_found`; missing papers return `404` with `paper_not_found`. IDs must be positive signed 64-bit integers. Invalid IDs or names return `422` with `invalid_request`.
+
+Deleting a collection removes only the group and its memberships. It keeps papers, cached PDFs, documents, analyses and evidence. These local operations do not call external services. Database contention can return `503` with `database_unavailable`.
 
 ## MVP Access Boundary
 
-The MVP does not include user accounts or public sharing. It accepts only supported open-access PDFs and does not bypass paywalls or access controls.
+The MVP does not include user accounts or public sharing. Automatic retrieval accepts supported open-access sources. Manual uploads need the user's confirmation and are labelled with unknown access rights. Neither path bypasses paywalls or access controls. Starting an analysis sends extracted text to the configured model provider; upload alone does not call that provider.
 
 Multi-paper comparison endpoints are outside this contract. They will be added only after single-paper analysis is stable and evaluated.
